@@ -1,0 +1,28 @@
+# Secrets
+.env
+
+# Dependencies
+node_modules/
+__pycache__/
+*.pyc
+
+# Large model files
+*.task
+pose_landmarker_heavy.task
+
+# Output files (generated)
+output/*.glb
+output/*.png
+output/*.json
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Temporary
+*.tmp
+/tmp/

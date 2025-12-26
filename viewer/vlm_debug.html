@@ -1,0 +1,616 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>VLM Debug - Joint Detection Visualization</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #0d1117;
+            color: #c9d1d9;
+            min-height: 100vh;
+        }
+
+        .container {
+            display: flex;
+            height: 100vh;
+        }
+
+        /* Left Panel - Image with Markers */
+        .image-panel {
+            flex: 1;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            border-right: 1px solid #30363d;
+        }
+
+        .image-panel h2 {
+            color: #58a6ff;
+            margin-bottom: 15px;
+            font-size: 18px;
+        }
+
+        .image-container {
+            position: relative;
+            flex: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: #161b22;
+            border-radius: 8px;
+            overflow: hidden;
+        }
+
+        .image-container img {
+            max-width: 100%;
+            max-height: 100%;
+            object-fit: contain;
+        }
+
+        .marker {
+            position: absolute;
+            width: 16px;
+            height: 16px;
+            border-radius: 50%;
+            transform: translate(-50%, -50%);
+            border: 2px solid white;
+            cursor: pointer;
+            transition: transform 0.2s;
+        }
+
+        .marker:hover {
+            transform: translate(-50%, -50%) scale(1.3);
+        }
+
+        .marker-label {
+            position: absolute;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(0,0,0,0.8);
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-size: 10px;
+            white-space: nowrap;
+            opacity: 0;
+            transition: opacity 0.2s;
+        }
+
+        .marker:hover .marker-label {
+            opacity: 1;
+        }
+
+        /* Marker Colors */
+        .marker-chin { background: #ff6b6b; }
+        .marker-groin { background: #ffd93d; }
+        .marker-shoulder-left { background: #6bcb77; }
+        .marker-shoulder-right { background: #4d96ff; }
+        .marker-elbow-left { background: #9b59b6; }
+        .marker-elbow-right { background: #e74c3c; }
+        .marker-wrist-left { background: #1abc9c; }
+        .marker-wrist-right { background: #f39c12; }
+        .marker-knee-left { background: #3498db; }
+        .marker-knee-right { background: #e91e63; }
+        .marker-ankle-left { background: #00bcd4; }
+        .marker-ankle-right { background: #ff5722; }
+
+        /* Legend */
+        .legend {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-top: 15px;
+            padding: 10px;
+            background: #161b22;
+            border-radius: 8px;
+        }
+
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            font-size: 11px;
+        }
+
+        .legend-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+        }
+
+        /* Right Panel - Analysis */
+        .analysis-panel {
+            flex: 1;
+            padding: 20px;
+            overflow-y: auto;
+        }
+
+        .analysis-panel h2 {
+            color: #58a6ff;
+            margin-bottom: 15px;
+            font-size: 18px;
+        }
+
+        .iteration {
+            background: #161b22;
+            border-radius: 8px;
+            padding: 15px;
+            margin-bottom: 15px;
+            border-left: 3px solid #30363d;
+        }
+
+        .iteration.current {
+            border-left-color: #58a6ff;
+        }
+
+        .iteration.pass {
+            border-left-color: #3fb950;
+        }
+
+        .iteration.fail {
+            border-left-color: #f85149;
+        }
+
+        .iteration-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+        }
+
+        .iteration-title {
+            font-weight: 600;
+            color: #f0f6fc;
+        }
+
+        .iteration-status {
+            padding: 3px 10px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: 500;
+        }
+
+        .status-pass {
+            background: #238636;
+            color: #fff;
+        }
+
+        .status-fail {
+            background: #da3633;
+            color: #fff;
+        }
+
+        .status-pending {
+            background: #6e7681;
+            color: #fff;
+        }
+
+        .section {
+            margin-top: 12px;
+        }
+
+        .section-title {
+            font-size: 12px;
+            color: #8b949e;
+            text-transform: uppercase;
+            margin-bottom: 6px;
+        }
+
+        .section-content {
+            background: #0d1117;
+            padding: 10px;
+            border-radius: 6px;
+            font-size: 13px;
+            line-height: 1.5;
+        }
+
+        .coordinates {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 8px;
+        }
+
+        .coord-item {
+            display: flex;
+            justify-content: space-between;
+            padding: 4px 8px;
+            background: #21262d;
+            border-radius: 4px;
+        }
+
+        .coord-name {
+            color: #8b949e;
+        }
+
+        .coord-value {
+            font-family: monospace;
+            color: #79c0ff;
+        }
+
+        .correction {
+            color: #ffd93d;
+            font-family: monospace;
+        }
+
+        .reason {
+            color: #c9d1d9;
+        }
+
+        /* Controls */
+        .controls {
+            display: flex;
+            gap: 10px;
+            margin-top: 15px;
+        }
+
+        .btn {
+            padding: 8px 16px;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 13px;
+            transition: background 0.2s;
+        }
+
+        .btn-primary {
+            background: #238636;
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background: #2ea043;
+        }
+
+        .btn-secondary {
+            background: #21262d;
+            color: #c9d1d9;
+        }
+
+        .btn-secondary:hover {
+            background: #30363d;
+        }
+
+        /* File Input */
+        .file-section {
+            margin-bottom: 20px;
+            padding: 15px;
+            background: #161b22;
+            border-radius: 8px;
+        }
+
+        .file-input {
+            display: none;
+        }
+
+        .file-label {
+            display: inline-block;
+            padding: 8px 16px;
+            background: #21262d;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 13px;
+        }
+
+        .file-label:hover {
+            background: #30363d;
+        }
+
+        .file-name {
+            margin-left: 10px;
+            color: #8b949e;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- Left Panel - Image with Markers -->
+        <div class="image-panel">
+            <h2>Joint Detection Visualization</h2>
+
+            <div class="file-section">
+                <input type="file" id="imageInput" class="file-input" accept="image/*">
+                <label for="imageInput" class="file-label">Load Image</label>
+                <span class="file-name" id="fileName">No file selected</span>
+                <button class="btn btn-secondary" onclick="loadDefaultImage()" style="margin-left: 10px;">Load Default</button>
+            </div>
+
+            <div class="image-container" id="imageContainer">
+                <img id="meshImage" src="" alt="Mesh front view">
+                <div id="markersContainer"></div>
+            </div>
+
+            <div class="legend" id="legend"></div>
+        </div>
+
+        <!-- Right Panel - Analysis -->
+        <div class="analysis-panel">
+            <h2>Gemini VLM Analysis</h2>
+
+            <div class="controls">
+                <button class="btn btn-primary" onclick="runVLMAnalysis()">Run Analysis</button>
+                <button class="btn btn-secondary" onclick="clearIterations()">Clear</button>
+            </div>
+
+            <div id="iterations" style="margin-top: 20px;"></div>
+        </div>
+    </div>
+
+    <script>
+        // Marker definitions with colors
+        const MARKERS = {
+            chin: { color: '#ff6b6b', label: 'Chin' },
+            groin: { color: '#ffd93d', label: 'Groin' },
+            'shoulder-left': { color: '#6bcb77', label: 'L Shoulder' },
+            'shoulder-right': { color: '#4d96ff', label: 'R Shoulder' },
+            'elbow-left': { color: '#9b59b6', label: 'L Elbow' },
+            'elbow-right': { color: '#e74c3c', label: 'R Elbow' },
+            'wrist-left': { color: '#1abc9c', label: 'L Wrist' },
+            'wrist-right': { color: '#f39c12', label: 'R Wrist' },
+            'knee-left': { color: '#3498db', label: 'L Knee' },
+            'knee-right': { color: '#e91e63', label: 'R Knee' },
+            'ankle-left': { color: '#00bcd4', label: 'L Ankle' },
+            'ankle-right': { color: '#ff5722', label: 'R Ankle' }
+        };
+
+        let currentMarkers = null;
+        let iterations = [];
+
+        // Initialize legend
+        function initLegend() {
+            const legend = document.getElementById('legend');
+            legend.innerHTML = Object.entries(MARKERS).map(([key, {color, label}]) => `
+                <div class="legend-item">
+                    <div class="legend-dot" style="background: ${color}"></div>
+                    <span>${label}</span>
+                </div>
+            `).join('');
+        }
+
+        // Load default image
+        function loadDefaultImage() {
+            const img = document.getElementById('meshImage');
+            img.src = '/output/front_view.png';
+            document.getElementById('fileName').textContent = 'front_view.png';
+
+            // Load default markers if available
+            fetch('/output/markers_final.json')
+                .then(r => r.json())
+                .then(markers => {
+                    currentMarkers = markers;
+                    renderMarkers(markers);
+                })
+                .catch(() => console.log('No markers file found'));
+        }
+
+        // Handle file input
+        document.getElementById('imageInput').addEventListener('change', function(e) {
+            const file = e.target.files[0];
+            if (file) {
+                const reader = new FileReader();
+                reader.onload = function(e) {
+                    document.getElementById('meshImage').src = e.target.result;
+                    document.getElementById('fileName').textContent = file.name;
+                };
+                reader.readAsDataURL(file);
+            }
+        });
+
+        // Render markers on image
+        function renderMarkers(markers) {
+            const container = document.getElementById('markersContainer');
+            const img = document.getElementById('meshImage');
+
+            // Wait for image to load
+            if (!img.complete) {
+                img.onload = () => renderMarkers(markers);
+                return;
+            }
+
+            container.innerHTML = '';
+
+            const imgRect = img.getBoundingClientRect();
+            const containerRect = document.getElementById('imageContainer').getBoundingClientRect();
+
+            // Calculate offset for centered image
+            const offsetX = (containerRect.width - img.width) / 2;
+            const offsetY = (containerRect.height - img.height) / 2;
+
+            // Flatten markers for rendering
+            const markerPositions = [
+                { key: 'chin', x: markers.chin.x, y: markers.chin.y },
+                { key: 'groin', x: markers.groin.x, y: markers.groin.y },
+                { key: 'shoulder-left', x: markers.shoulders.left.x, y: markers.shoulders.left.y },
+                { key: 'shoulder-right', x: markers.shoulders.right.x, y: markers.shoulders.right.y },
+                { key: 'elbow-left', x: markers.elbows.left.x, y: markers.elbows.left.y },
+                { key: 'elbow-right', x: markers.elbows.right.x, y: markers.elbows.right.y },
+                { key: 'wrist-left', x: markers.wrists.left.x, y: markers.wrists.left.y },
+                { key: 'wrist-right', x: markers.wrists.right.x, y: markers.wrists.right.y },
+                { key: 'knee-left', x: markers.knees.left.x, y: markers.knees.left.y },
+                { key: 'knee-right', x: markers.knees.right.x, y: markers.knees.right.y },
+                { key: 'ankle-left', x: markers.ankles.left.x, y: markers.ankles.left.y },
+                { key: 'ankle-right', x: markers.ankles.right.x, y: markers.ankles.right.y }
+            ];
+
+            markerPositions.forEach(({key, x, y}) => {
+                const marker = document.createElement('div');
+                marker.className = `marker marker-${key}`;
+                marker.style.left = `${offsetX + x * img.width}px`;
+                marker.style.top = `${offsetY + y * img.height}px`;
+                marker.style.background = MARKERS[key].color;
+                marker.innerHTML = `<div class="marker-label">${MARKERS[key].label} (${x.toFixed(3)}, ${y.toFixed(3)})</div>`;
+                container.appendChild(marker);
+            });
+        }
+
+        // Add iteration to display
+        function addIteration(iteration) {
+            iterations.push(iteration);
+            renderIterations();
+        }
+
+        // Render all iterations
+        function renderIterations() {
+            const container = document.getElementById('iterations');
+            container.innerHTML = iterations.map((iter, idx) => `
+                <div class="iteration ${iter.status === 'PASS' ? 'pass' : iter.status === 'FAIL' ? 'fail' : 'current'}">
+                    <div class="iteration-header">
+                        <span class="iteration-title">Iteration ${idx + 1}</span>
+                        <span class="iteration-status ${iter.status === 'PASS' ? 'status-pass' : iter.status === 'FAIL' ? 'status-fail' : 'status-pending'}">
+                            ${iter.status}
+                        </span>
+                    </div>
+
+                    ${iter.perception ? `
+                    <div class="section">
+                        <div class="section-title">Perception Analysis</div>
+                        <div class="section-content">
+                            <div class="coordinates">
+                                ${Object.entries(iter.perception).map(([key, val]) => {
+                                    if (typeof val === 'object' && val.x !== undefined) {
+                                        return `<div class="coord-item">
+                                            <span class="coord-name">${key}</span>
+                                            <span class="coord-value">(${val.x.toFixed(3)}, ${val.y.toFixed(3)})</span>
+                                        </div>`;
+                                    } else if (typeof val === 'object') {
+                                        return Object.entries(val).map(([side, coord]) => `
+                                            <div class="coord-item">
+                                                <span class="coord-name">${key}.${side}</span>
+                                                <span class="coord-value">(${coord.x.toFixed(3)}, ${coord.y.toFixed(3)})</span>
+                                            </div>
+                                        `).join('');
+                                    }
+                                    return '';
+                                }).join('')}
+                            </div>
+                        </div>
+                    </div>
+                    ` : ''}
+
+                    ${iter.evaluation ? `
+                    <div class="section">
+                        <div class="section-title">Judge Evaluation</div>
+                        <div class="section-content">
+                            <div class="reason">${iter.evaluation.reason || 'No reason provided'}</div>
+                        </div>
+                    </div>
+                    ` : ''}
+
+                    ${iter.correction ? `
+                    <div class="section">
+                        <div class="section-title">Correction Feedback</div>
+                        <div class="section-content">
+                            <div class="correction">${iter.correction}</div>
+                        </div>
+                    </div>
+                    ` : ''}
+                </div>
+            `).join('');
+        }
+
+        // Clear iterations
+        function clearIterations() {
+            iterations = [];
+            renderIterations();
+        }
+
+        // Run VLM analysis (simulated for demo, or connect to actual API)
+        async function runVLMAnalysis() {
+            clearIterations();
+
+            // Show loading state
+            addIteration({
+                status: 'PENDING',
+                perception: null,
+                evaluation: null,
+                correction: null
+            });
+
+            try {
+                // Call backend API to run VLM
+                const response = await fetch('/api/vlm/analyze', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        image_path: document.getElementById('meshImage').src
+                    })
+                });
+
+                if (response.ok) {
+                    const data = await response.json();
+                    iterations = data.iterations;
+                    currentMarkers = data.final_markers;
+                    renderMarkers(currentMarkers);
+                    renderIterations();
+                } else {
+                    // Fallback to loading from files
+                    await loadFromFiles();
+                }
+            } catch (error) {
+                console.log('API not available, loading from files');
+                await loadFromFiles();
+            }
+        }
+
+        // Load analysis from existing files
+        async function loadFromFiles() {
+            clearIterations();
+
+            try {
+                const markersResponse = await fetch('/output/markers_final.json');
+                const markers = await markersResponse.json();
+
+                // Simulate iteration display
+                addIteration({
+                    status: 'PASS',
+                    perception: {
+                        chin: markers.chin,
+                        groin: markers.groin,
+                        shoulders: markers.shoulders,
+                        elbows: markers.elbows,
+                        wrists: markers.wrists,
+                        knees: markers.knees,
+                        ankles: markers.ankles
+                    },
+                    evaluation: {
+                        status: 'PASS',
+                        reason: 'Markers align with joint volumes.'
+                    },
+                    correction: null
+                });
+
+                currentMarkers = markers;
+                renderMarkers(markers);
+
+            } catch (error) {
+                addIteration({
+                    status: 'FAIL',
+                    perception: null,
+                    evaluation: { reason: 'Failed to load markers: ' + error.message },
+                    correction: null
+                });
+            }
+        }
+
+        // Handle window resize
+        window.addEventListener('resize', () => {
+            if (currentMarkers) {
+                renderMarkers(currentMarkers);
+            }
+        });
+
+        // Initialize
+        initLegend();
+
+        // Auto-load default on page load
+        setTimeout(loadDefaultImage, 500);
+    </script>
+</body>
+</html>

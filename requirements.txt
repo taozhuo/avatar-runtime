@@ -1,0 +1,11 @@
+# Bakable AI - Python Dependencies
+
+# Core
+requests>=2.31.0
+python-dotenv>=1.0.0
+
+# Google Gemini VLM
+google-generativeai>=0.3.0
+
+# Note: Blender has its own bundled Python with bpy
+# Install Blender separately: https://www.blender.org/download/

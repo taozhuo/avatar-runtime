@@ -1,0 +1,1105 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bakable AI - Avatar Runtime Viewer</title>
+    <link rel="icon" type="image/svg+xml" href="favicon.svg">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #1a1a2e;
+            color: #eee;
+            overflow: hidden;
+        }
+
+        #canvas-container {
+            width: 100vw;
+            height: 100vh;
+        }
+
+        #controls {
+            position: fixed;
+            top: 20px;
+            left: 20px;
+            background: rgba(0, 0, 0, 0.8);
+            padding: 20px;
+            border-radius: 12px;
+            min-width: 280px;
+            max-height: calc(100vh - 40px);
+            overflow-y: auto;
+        }
+
+        h1 {
+            font-size: 18px;
+            margin-bottom: 15px;
+            color: #00d4ff;
+        }
+
+        .section {
+            margin-bottom: 20px;
+        }
+
+        .section-title {
+            font-size: 12px;
+            text-transform: uppercase;
+            color: #888;
+            margin-bottom: 8px;
+            letter-spacing: 1px;
+        }
+
+        .file-input-wrapper {
+            position: relative;
+            margin-bottom: 10px;
+        }
+
+        .file-input-wrapper input[type="file"] {
+            display: none;
+        }
+
+        .file-btn {
+            display: block;
+            width: 100%;
+            padding: 12px;
+            background: #2d2d44;
+            border: 2px dashed #444;
+            border-radius: 8px;
+            color: #aaa;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .file-btn:hover {
+            border-color: #00d4ff;
+            color: #00d4ff;
+        }
+
+        .file-btn.loaded {
+            border-style: solid;
+            border-color: #00ff88;
+            color: #00ff88;
+        }
+
+        .animation-list {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .anim-btn {
+            padding: 10px 15px;
+            background: #2d2d44;
+            border: none;
+            border-radius: 6px;
+            color: #eee;
+            cursor: pointer;
+            text-align: left;
+            transition: all 0.2s;
+        }
+
+        .anim-btn:hover {
+            background: #3d3d5c;
+        }
+
+        .anim-btn.active {
+            background: #00d4ff;
+            color: #000;
+        }
+
+        .slider-group {
+            margin-bottom: 12px;
+        }
+
+        .slider-group label {
+            display: flex;
+            justify-content: space-between;
+            font-size: 13px;
+            margin-bottom: 5px;
+        }
+
+        .slider-group input[type="range"] {
+            width: 100%;
+            height: 6px;
+            -webkit-appearance: none;
+            background: #2d2d44;
+            border-radius: 3px;
+            outline: none;
+        }
+
+        .slider-group input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            width: 16px;
+            height: 16px;
+            background: #00d4ff;
+            border-radius: 50%;
+            cursor: pointer;
+        }
+
+        #status {
+            position: fixed;
+            bottom: 20px;
+            left: 20px;
+            background: rgba(0, 0, 0, 0.8);
+            padding: 10px 15px;
+            border-radius: 8px;
+            font-size: 13px;
+        }
+
+        #status.error {
+            border-left: 3px solid #ff4444;
+        }
+
+        #status.success {
+            border-left: 3px solid #00ff88;
+        }
+
+        #loading {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            font-size: 24px;
+            color: #00d4ff;
+        }
+
+        .hidden {
+            display: none !important;
+        }
+    </style>
+</head>
+<body>
+    <div id="canvas-container"></div>
+
+    <div id="controls">
+        <h1>Bakable AI Viewer</h1>
+
+        <div class="section">
+            <div class="section-title">Avatar</div>
+            <div class="file-input-wrapper">
+                <input type="file" id="avatar-input" accept=".glb,.gltf">
+                <label class="file-btn" for="avatar-input" id="avatar-label">
+                    Drop or click to load avatar (.glb)
+                </label>
+            </div>
+        </div>
+
+        <div class="section">
+            <div class="section-title">Animations</div>
+            <div class="file-input-wrapper">
+                <input type="file" id="anim-input" accept=".fbx,.glb,.gltf" multiple>
+                <label class="file-btn" for="anim-input" id="anim-label">
+                    Load animation (.fbx / .glb)
+                </label>
+            </div>
+            <div class="animation-list" id="anim-list"></div>
+        </div>
+
+        <div class="section">
+            <div class="section-title">Playback</div>
+            <div class="slider-group">
+                <label>
+                    <span>Speed</span>
+                    <span id="speed-value">1.0x</span>
+                </label>
+                <input type="range" id="speed-slider" min="0.1" max="2" step="0.1" value="1">
+            </div>
+        </div>
+
+        <div class="section">
+            <div class="section-title">Camera</div>
+            <div class="slider-group">
+                <label>
+                    <span>Distance</span>
+                    <span id="dist-value">3.0</span>
+                </label>
+                <input type="range" id="dist-slider" min="1" max="10" step="0.5" value="3">
+            </div>
+        </div>
+    </div>
+
+    <div id="status" class="hidden"></div>
+    <div id="loading">Loading Three.js...</div>
+
+    <!-- Import Maps for ES Modules -->
+    <script type="importmap">
+    {
+        "imports": {
+            "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+            "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+        }
+    }
+    </script>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+        import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+        import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
+
+        // ============================================
+        // BONE NAME MAPPING (Universal Translator)
+        // ============================================
+        const BONE_MAPPINGS = {
+            // Unreal Engine -> Mixamo
+            'Pelvis': 'mixamorig:Hips',
+            'spine_01': 'mixamorig:Spine',
+            'spine_02': 'mixamorig:Spine1',
+            'spine_03': 'mixamorig:Spine2',
+            'neck_01': 'mixamorig:Neck',
+            'head': 'mixamorig:Head',
+            'clavicle_l': 'mixamorig:LeftShoulder',
+            'clavicle_r': 'mixamorig:RightShoulder',
+            'upperarm_l': 'mixamorig:LeftArm',
+            'upperarm_r': 'mixamorig:RightArm',
+            'lowerarm_l': 'mixamorig:LeftForeArm',
+            'lowerarm_r': 'mixamorig:RightForeArm',
+            'hand_l': 'mixamorig:LeftHand',
+            'hand_r': 'mixamorig:RightHand',
+            'thigh_l': 'mixamorig:LeftUpLeg',
+            'thigh_r': 'mixamorig:RightUpLeg',
+            'calf_l': 'mixamorig:LeftLeg',
+            'calf_r': 'mixamorig:RightLeg',
+            'foot_l': 'mixamorig:LeftFoot',
+            'foot_r': 'mixamorig:RightFoot',
+
+            // 3ds Max Biped -> Mixamo
+            'Bip001 Pelvis': 'mixamorig:Hips',
+            'Bip001 Spine': 'mixamorig:Spine',
+            'Bip001 Spine1': 'mixamorig:Spine1',
+            'Bip001 Spine2': 'mixamorig:Spine2',
+            'Bip001 Neck': 'mixamorig:Neck',
+            'Bip001 Head': 'mixamorig:Head',
+
+            // Common variations
+            'Hips': 'mixamorig:Hips',
+            'Spine': 'mixamorig:Spine',
+            'Spine1': 'mixamorig:Spine1',
+            'Spine2': 'mixamorig:Spine2',
+            'Neck': 'mixamorig:Neck',
+            'Head': 'mixamorig:Head',
+        };
+
+        // Bones to ignore (IK helpers, twist bones, etc.)
+        const IGNORED_BONES = [
+            'ik_', 'IK_', 'twist', 'Twist', 'roll', 'Roll',
+            'helper', 'Helper', 'ctrl', 'Ctrl', 'pole', 'Pole'
+        ];
+
+        // ============================================
+        // APPLICATION STATE
+        // ============================================
+        let scene, camera, renderer, controls;
+        let avatarModel = null;
+        let mixer = null;
+        let currentAction = null;
+        let animations = new Map();
+        let clock = new THREE.Clock();
+        let avatarHeight = 1.0;
+        let avatarMixamoPrefix = 'mixamorig:';  // Detected from avatar (could be mixamorig8:, etc.)
+
+        // ============================================
+        // INITIALIZATION
+        // ============================================
+        function init() {
+            const container = document.getElementById('canvas-container');
+
+            // Scene
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x1a1a2e);
+
+            // Camera
+            camera = new THREE.PerspectiveCamera(
+                45,
+                window.innerWidth / window.innerHeight,
+                0.1,
+                1000
+            );
+            camera.position.set(0, 1.5, 3);
+
+            // Renderer
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(window.devicePixelRatio);
+            renderer.shadowMap.enabled = true;
+            renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+            container.appendChild(renderer.domElement);
+
+            // Controls
+            controls = new OrbitControls(camera, renderer.domElement);
+            controls.target.set(0, 1, 0);
+            controls.enableDamping = true;
+            controls.dampingFactor = 0.05;
+            controls.update();
+
+            // Lighting
+            const ambient = new THREE.AmbientLight(0xffffff, 0.5);
+            scene.add(ambient);
+
+            const directional = new THREE.DirectionalLight(0xffffff, 1);
+            directional.position.set(5, 10, 7);
+            directional.castShadow = true;
+            directional.shadow.mapSize.width = 2048;
+            directional.shadow.mapSize.height = 2048;
+            scene.add(directional);
+
+            const backLight = new THREE.DirectionalLight(0x4488ff, 0.3);
+            backLight.position.set(-5, 5, -5);
+            scene.add(backLight);
+
+            // Ground plane
+            const groundGeom = new THREE.PlaneGeometry(20, 20);
+            const groundMat = new THREE.MeshStandardMaterial({
+                color: 0x2d2d44,
+                roughness: 0.8
+            });
+            const ground = new THREE.Mesh(groundGeom, groundMat);
+            ground.rotation.x = -Math.PI / 2;
+            ground.receiveShadow = true;
+            scene.add(ground);
+
+            // Grid helper
+            const grid = new THREE.GridHelper(20, 40, 0x444444, 0x333333);
+            scene.add(grid);
+
+            // Event listeners
+            window.addEventListener('resize', onWindowResize);
+            setupFileInputs();
+            setupSliders();
+
+            // Hide loading
+            document.getElementById('loading').classList.add('hidden');
+
+            // Start animation loop
+            animate();
+        }
+
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        let frameCount = 0;
+
+        function animate() {
+            requestAnimationFrame(animate);
+
+            const delta = clock.getDelta();
+
+            if (mixer) {
+                mixer.update(delta);
+            }
+
+            // Manual animation: apply FBX values directly to bones
+            frameCount++;
+
+
+            if (window.animData && avatarModel) {
+                const clip = window.animData.clip;
+                const boneMap = window.animData.boneMap;
+
+                // Calculate animation time (loop)
+                const duration = clip.duration;
+                const time = (Date.now() * 0.001) % duration;
+
+                // Apply each track
+                for (const track of clip.tracks) {
+                    const boneName = track.name.split('.')[0];
+                    const bone = boneMap.get(boneName);
+                    if (!bone) continue;
+
+                    // Sample track at current time
+                    const idx = sampleTrackIndex(track.times, time);
+
+                    if (track.name.includes('.quaternion')) {
+                        const i = idx * 4;
+                        const animQuat = new THREE.Quaternion(
+                            track.values[i],
+                            track.values[i + 1],
+                            track.values[i + 2],
+                            track.values[i + 3]
+                        );
+
+                        const restPose = window.animData.restPose;
+                        const fbxRefPose = window.animData.fbxRefPose;
+
+                        // Use relative retargeting for arm bones
+                        // Delta = animQuat * inverse(fbxRestPose)
+                        // Apply FBX quaternion directly - arms will be wrong but visible
+                        bone.quaternion.copy(animQuat);
+                    } else if (track.name.includes('.position')) {
+                        // Skip Hips position (root motion) to keep avatar grounded
+                        // Or apply only Y offset for bobbing
+                        if (boneName.includes('Hips')) {
+                            // Keep X/Z at origin, only apply Y bob (subtract base height)
+                            const i = idx * 3;
+                            const baseY = track.values[1];  // First frame Y as reference
+                            bone.position.y = 1.3 + (track.values[i + 1] - baseY);  // Raised hip height + delta
+                        } else {
+                            const i = idx * 3;
+                            bone.position.set(
+                                track.values[i],
+                                track.values[i + 1],
+                                track.values[i + 2]
+                            );
+                        }
+                    }
+                }
+            }
+
+            function sampleTrackIndex(times, t) {
+                for (let i = 0; i < times.length - 1; i++) {
+                    if (t >= times[i] && t < times[i + 1]) return i;
+                }
+                return times.length - 1;
+            }
+
+            controls.update();
+            renderer.render(scene, camera);
+        }
+
+        // ============================================
+        // FILE LOADING
+        // ============================================
+        function setupFileInputs() {
+            const avatarInput = document.getElementById('avatar-input');
+            const animInput = document.getElementById('anim-input');
+
+            avatarInput.addEventListener('change', (e) => {
+                if (e.target.files.length > 0) {
+                    loadAvatar(e.target.files[0]);
+                }
+            });
+
+            animInput.addEventListener('change', (e) => {
+                for (const file of e.target.files) {
+                    loadAnimation(file);
+                }
+            });
+        }
+
+        async function loadAvatar(file) {
+            showStatus('Loading avatar...', 'info');
+
+            try {
+                const url = URL.createObjectURL(file);
+                const loader = new GLTFLoader();
+
+                const gltf = await loader.loadAsync(url);
+
+                // Remove previous avatar
+                if (avatarModel) {
+                    scene.remove(avatarModel);
+                    if (mixer) {
+                        mixer.stopAllAction();
+                    }
+                }
+
+                avatarModel = gltf.scene;
+                console.log('Avatar loaded:', avatarModel);
+
+                // Debug: print bounding box
+                const box = new THREE.Box3().setFromObject(avatarModel);
+                console.log('Avatar bounds:', box.min, box.max);
+
+                // Enable shadows and detect Mixamo prefix
+                avatarMixamoPrefix = 'mixamorig:';  // Reset to default
+                avatarModel.traverse((child) => {
+                    if (child.isMesh) {
+                        child.castShadow = true;
+                        child.receiveShadow = true;
+                    }
+                    // Detect Mixamo prefix from Hips bone
+                    if (child.isBone && child.name.includes('Hips')) {
+                        avatarMixamoPrefix = child.name.split('Hips')[0];
+                    }
+                });
+
+                // Calculate height for scaling
+                const boundBox = new THREE.Box3().setFromObject(avatarModel);
+                avatarHeight = boundBox.max.y - boundBox.min.y;
+                console.log('Avatar height:', avatarHeight);
+
+                // Center on ground
+                avatarModel.position.y = -boundBox.min.y;
+                console.log('Avatar position after ground:', avatarModel.position);
+
+                scene.add(avatarModel);
+
+                // Adjust camera to look at avatar
+                const center = new THREE.Vector3();
+                boundBox.getCenter(center);
+                controls.target.set(center.x, avatarHeight / 2, center.z);
+                camera.position.set(center.x, avatarHeight / 2, avatarHeight * 2);
+                controls.update();
+                console.log('Camera adjusted to:', camera.position, 'looking at:', controls.target);
+
+                // Create mixer on the scene root
+                mixer = new THREE.AnimationMixer(avatarModel);
+
+                // Update UI
+                document.getElementById('avatar-label').textContent = file.name;
+                document.getElementById('avatar-label').classList.add('loaded');
+
+                showStatus(`Loaded: ${file.name} (height: ${avatarHeight.toFixed(2)}m)`, 'success');
+
+                // Check for embedded animations in the GLB
+                if (gltf.animations && gltf.animations.length > 0) {
+                    console.log(`Found ${gltf.animations.length} embedded animation(s)`);
+
+                    for (const clip of gltf.animations) {
+                        const animName = clip.name || `Embedded_${animations.size}`;
+                        clip.name = animName;
+                        animations.set(animName, clip);
+                        addAnimationButton(animName);
+                        console.log(`  - ${animName} (${clip.duration.toFixed(2)}s)`);
+                    }
+
+                    // Auto-play first embedded animation
+                    const firstName = gltf.animations[0].name;
+                    setTimeout(() => playAnimation(firstName), 100);
+                } else if (currentAction && animations.size > 0) {
+                    // Re-apply current animation if any
+                    const currentName = [...animations.entries()]
+                        .find(([_, clip]) => clip === currentAction._clip)?.[0];
+                    if (currentName) {
+                        playAnimation(currentName);
+                    }
+                }
+
+                URL.revokeObjectURL(url);
+
+            } catch (error) {
+                console.error('Error loading avatar:', error);
+                showStatus(`Error: ${error.message}`, 'error');
+            }
+        }
+
+        /**
+         * UNIVERSAL RETARGETER (Fuzzy Matching)
+         * Matches animation tracks to bones based on "Core Names"
+         * Ignores mixamo prefixes, namespaces (8), colons, and .001 Blender suffixes
+         */
+        function cleanAndRetargetClip(clip, root) {
+            // 1. MAP THE SKELETON - Extract core names from actual bone names
+            const validBones = {};  // coreName -> actualBoneName
+            const boneMap = new Map();
+            const restPose = new Map();
+
+            root.traverse((child) => {
+                if (child.isBone) {
+                    // Strip to get "Core Name"
+                    // Example: "mixamorig8LeftArm.001" -> "LeftArm"
+                    let coreName = child.name
+                        .replace(/mixamorig/gi, "")  // Remove mixamorig prefix
+                        .replace(/[0-9]+:/g, "")     // Remove number + colon (e.g., "8:")
+                        .replace(/:/g, "")           // Remove any remaining colons
+                        .replace(/^[0-9]+/, "")      // Remove leading numbers
+                        .split(".")[0];              // Remove .001 suffix
+
+                    validBones[coreName] = child.name;
+                    boneMap.set(child.name, child);
+                    restPose.set(child.name, child.quaternion.clone());
+                }
+            });
+
+            console.log('Skeleton core names:', Object.keys(validBones).slice(0, 10));
+
+            // 2. REWRITE THE ANIMATION TRACKS with fuzzy matching
+            const newTracks = [];
+            let matchCount = 0;
+            const fbxRefPose = new Map();
+
+            for (const track of clip.tracks) {
+                // Skip scale tracks (cause disappearing avatar)
+                if (track.name.includes('.scale')) continue;
+
+                // Get animation track's core name
+                const trackBase = track.name.split('.')[0];
+                const propName = track.name.substring(trackBase.length + 1); // .quaternion or .position
+
+                // Strip animation's prefix to get core name
+                let animCoreName = trackBase
+                    .replace(/mixamorig/gi, "")
+                    .replace(/[0-9]+:/g, "")
+                    .replace(/:/g, "")
+                    .replace(/^[0-9]+/, "");
+
+                // Fuzzy match to find target bone
+                const targetBoneName = validBones[animCoreName];
+
+                if (targetBoneName) {
+                    // Found match - create track with actual bone name
+                    const times = track.times.slice();
+                    const values = track.values.slice();
+
+                    // Convert position from cm to meters
+                    if (propName === 'position') {
+                        for (let i = 0; i < values.length; i++) {
+                            values[i] *= 0.01;
+                        }
+                    }
+
+                    const newName = `${targetBoneName}.${propName}`;
+                    let newTrack;
+                    if (propName === 'quaternion') {
+                        newTrack = new THREE.QuaternionKeyframeTrack(newName, times, values);
+                        // Store first frame as FBX reference
+                        fbxRefPose.set(targetBoneName, new THREE.Quaternion(
+                            values[0], values[1], values[2], values[3]
+                        ));
+                    } else if (propName === 'position') {
+                        newTrack = new THREE.VectorKeyframeTrack(newName, times, values);
+                    } else {
+                        newTrack = new THREE.NumberKeyframeTrack(newName, times, values);
+                    }
+
+                    newTracks.push(newTrack);
+                    matchCount++;
+                }
+            }
+
+            clip.tracks = newTracks;
+
+            // Store for manual animation
+            window.animData = { clip, boneMap, restPose, fbxRefPose };
+            console.log(`Fuzzy retargeting: ${matchCount} tracks matched to skeleton`);
+        }
+
+        async function loadAnimation(file) {
+            showStatus(`Loading animation: ${file.name}...`, 'info');
+            console.log('--- Loading animation:', file.name, '---');
+
+            try {
+                const url = URL.createObjectURL(file);
+                const ext = file.name.split('.').pop().toLowerCase();
+
+                let clip;
+
+                if (ext === 'fbx') {
+                    const loader = new FBXLoader();
+                    const fbx = await loader.loadAsync(url);
+
+                    if (fbx.animations.length === 0) {
+                        throw new Error('No animations found in FBX');
+                    }
+
+                    clip = fbx.animations[0];
+
+                    // Retarget FBX animation to GLB avatar bones
+                    cleanAndRetargetClip(clip, avatarModel);
+
+                    // Check: do any tracks now match avatar bones?
+                    let matchCount = 0;
+                    const avatarBones = new Set();
+                    avatarModel.traverse(c => { if (c.isBone) avatarBones.add(c.name); });
+                    clip.tracks.forEach(t => {
+                        const boneName = t.name.split('.')[0];
+                        if (avatarBones.has(boneName)) matchCount++;
+                    });
+                    console.log(`MATCH CHECK: ${matchCount}/${clip.tracks.length} tracks match avatar bones`);
+                    showStatus(`Tracks: ${matchCount}/${clip.tracks.length} match. Raw: ${rawSample[0]}`, 'info');
+
+                } else if (ext === 'glb' || ext === 'gltf') {
+                    const loader = new GLTFLoader();
+                    const gltf = await loader.loadAsync(url);
+
+                    if (gltf.animations.length === 0) {
+                        throw new Error('No animations found in GLB');
+                    }
+
+                    clip = gltf.animations[0];
+                }
+
+                // Store animation
+                const animName = file.name.replace(/\.[^/.]+$/, '');
+                clip.name = animName;
+                animations.set(animName, clip);
+
+                // Add button
+                addAnimationButton(animName);
+
+                showStatus(`Loaded animation: ${animName}`, 'success');
+
+                // Auto-play if this is the first animation
+                if (animations.size === 1 && avatarModel) {
+                    playAnimation(animName);
+                }
+
+                URL.revokeObjectURL(url);
+
+            } catch (error) {
+                console.error('Error loading animation:', error);
+                showStatus(`Error: ${error.message}`, 'error');
+            }
+        }
+
+        // ============================================
+        // ANIMATION RETARGETING
+        // ============================================
+        function retargetAnimation(clip, sourceAsset) {
+            const newTracks = [];
+
+            // Detect source skeleton type
+            let skeletonType = 'unknown';
+            const trackNames = clip.tracks.map(t => t.name);
+
+            if (trackNames.some(n => n.includes('Pelvis'))) {
+                skeletonType = 'unreal';
+            } else if (trackNames.some(n => n.includes('Bip001'))) {
+                skeletonType = '3dsmax';
+            } else if (trackNames.some(n => /mixamorig\d*:/.test(n))) {
+                skeletonType = 'mixamo';
+            }
+
+            console.log(`Detected skeleton type: ${skeletonType}`);
+
+            // Get source animation hips height for scaling
+            let sourceHipsHeight = 1.0;
+            // Search for various Mixamo prefix variations
+            const hipsSearchNames = [
+                'Hips', 'Pelvis', 'Bip001 Pelvis',
+                'mixamorig:Hips', 'mixamorig1:Hips', 'mixamorig2:Hips',
+                'mixamorig3:Hips', 'mixamorig4:Hips', 'mixamorig5:Hips',
+                'mixamorig6:Hips', 'mixamorig7:Hips', 'mixamorig8:Hips',
+                'mixamorig9:Hips'
+            ];
+            const sourceHips = findBone(sourceAsset, hipsSearchNames);
+            if (sourceHips) {
+                sourceHipsHeight = sourceHips.position.y;
+            }
+
+            // Scale factor for position tracks
+            const scaleFactor = avatarHeight / (sourceHipsHeight * 2 || 1);
+            console.log(`Animation scale: avatarHeight=${avatarHeight}, sourceHipsHeight=${sourceHipsHeight}, scaleFactor=${scaleFactor}`);
+
+            for (const track of clip.tracks) {
+                // Parse track name: "boneName.property"
+                const match = track.name.match(/^(.+)\.(position|quaternion|scale)$/);
+                if (!match) {
+                    newTracks.push(track);
+                    continue;
+                }
+
+                const [, boneName, property] = match;
+
+                // Skip ignored bones
+                if (IGNORED_BONES.some(ignored => boneName.includes(ignored))) {
+                    continue;
+                }
+
+                // Map bone name to avatar's Mixamo prefix
+                let mappedName = boneName;
+
+                // Handle Mixamo bones - with or without colon separator
+                // FBX loader may import as "mixamorig8Hips" or "mixamorig8:Hips"
+                const mixamoMatchColon = boneName.match(/^(mixamorig\d*):(.+)$/);
+                const mixamoMatchNoColon = boneName.match(/^(mixamorig\d*)([A-Z].*)$/);
+
+                if (mixamoMatchColon) {
+                    // Animation has colon: "mixamorig:Hips" -> "mixamorig8Hips" (no colon - GLTF strips them)
+                    mappedName = `${avatarMixamoPrefix}${mixamoMatchColon[2]}`;
+                    console.log(`Mapped (colon): ${boneName} -> ${mappedName}`);
+                } else if (mixamoMatchNoColon) {
+                    // No colon: "mixamorig8Hips" -> "mixamorig8Hips"
+                    mappedName = `${avatarMixamoPrefix}${mixamoMatchNoColon[2]}`;
+                    console.log(`Mapped (no colon): ${boneName} -> ${mappedName}`);
+                } else if (BONE_MAPPINGS[boneName]) {
+                    // Map from other formats (Unreal, 3ds Max) to avatar's prefix
+                    const targetBone = BONE_MAPPINGS[boneName].replace('mixamorig:', avatarMixamoPrefix);
+                    mappedName = targetBone;
+                    console.log(`Mapped (dict): ${boneName} -> ${mappedName}`);
+                } else {
+                    console.log(`No mapping for: ${boneName}`);
+                }
+
+                // Create new track with mapped name
+                const newTrackName = `${mappedName}.${property}`;
+
+                // Clone the track (skip position scaling for now to debug)
+                let newTrack = track.clone();
+                newTrack.name = newTrackName;
+
+                newTracks.push(newTrack);
+            }
+
+            return new THREE.AnimationClip(clip.name, clip.duration, newTracks);
+        }
+
+        function findBone(object, names) {
+            let result = null;
+            object.traverse((child) => {
+                if (child.isBone && names.includes(child.name)) {
+                    result = child;
+                }
+            });
+            return result;
+        }
+
+        // ============================================
+        // ANIMATION PLAYBACK
+        // ============================================
+        function addAnimationButton(name) {
+            const container = document.getElementById('anim-list');
+
+            const btn = document.createElement('button');
+            btn.className = 'anim-btn';
+            btn.textContent = name;
+            btn.onclick = () => playAnimation(name);
+
+            container.appendChild(btn);
+        }
+
+        function playAnimation(name) {
+            if (!avatarModel || !mixer) {
+                showStatus('Load an avatar first', 'error');
+                return;
+            }
+
+            const clip = animations.get(name);
+            if (!clip) {
+                showStatus(`Animation not found: ${name}`, 'error');
+                return;
+            }
+
+            // Debug: Log clip info
+            console.log('=== PLAYING ANIMATION ===');
+            console.log('Clip name:', clip.name);
+            console.log('Duration:', clip.duration);
+            console.log('Tracks:', clip.tracks.length);
+            console.log('First 10 track names:');
+            clip.tracks.slice(0, 10).forEach(t => console.log('  ', t.name));
+
+            // Debug: Check if bones exist in scene
+            const trackBoneNames = new Set(clip.tracks.map(t => t.name.split('.')[0]));
+            const sceneBoneNames = new Set();
+            avatarModel.traverse(c => { if (c.isBone) sceneBoneNames.add(c.name); });
+
+            let matches = 0;
+            trackBoneNames.forEach(name => {
+                if (sceneBoneNames.has(name)) matches++;
+            });
+            console.log(`Bone matching: ${matches}/${trackBoneNames.size} track bones found in scene`);
+            console.log('Scene bones (sample):', [...sceneBoneNames].slice(0, 5));
+
+            // Debug: Print scene hierarchy
+            console.log('=== SCENE HIERARCHY ===');
+            function printHierarchy(obj, indent = '') {
+                const type = obj.isBone ? 'Bone' : (obj.isSkinnedMesh ? 'SkinnedMesh' : obj.type);
+                console.log(indent + obj.name + ' [' + type + ']');
+                if (obj.children && indent.length < 8) {
+                    obj.children.forEach(c => printHierarchy(c, indent + '  '));
+                }
+            }
+            printHierarchy(avatarModel);
+
+            // Stop current animation
+            if (currentAction) {
+                currentAction.fadeOut(0.3);
+            }
+
+            // Play new animation
+            const action = mixer.clipAction(clip);
+            action.reset();
+            action.setLoop(THREE.LoopRepeat, Infinity);  // Ensure looping
+            action.clampWhenFinished = false;
+            action.fadeIn(0.3);
+            action.play();
+            currentAction = action;
+
+            // Debug: Log action state
+            console.log('Action created, isRunning:', action.isRunning());
+            console.log('Action loop:', action.loop);
+            console.log('Mixer time:', mixer.time);
+
+            // Debug: Check bindings
+            setTimeout(() => {
+                console.log('=== AFTER 1 SECOND ===');
+                console.log('Mixer time now:', mixer.time);
+                console.log('Action time:', action.time);
+                console.log('Action isRunning:', action.isRunning());
+
+                // Test PropertyBinding directly
+                const testTrack = clip.tracks[0];
+                console.log('Test track:', testTrack.name);
+                const binding = new THREE.PropertyBinding(avatarModel, testTrack.name);
+                console.log('Binding node:', binding.node?.name || 'NOT FOUND');
+                console.log('Binding targetObject:', binding.targetObject?.name || binding.targetObject);
+                console.log('Binding resolved path:', binding.path);
+
+                // Check the Hips bone position directly
+                let sceneBone = null;
+                avatarModel.traverse(c => {
+                    if (c.name === 'mixamorig8Hips') {
+                        sceneBone = c;
+                        console.log('Scene Hips bone found:', c.name, 'uuid:', c.uuid);
+                        console.log('Hips position:', c.position.toArray());
+                    }
+                });
+
+                // Check SkinnedMesh skeleton bones
+                avatarModel.traverse(c => {
+                    if (c.isSkinnedMesh) {
+                        console.log('SkinnedMesh found:', c.name);
+                        console.log('Skeleton bones count:', c.skeleton?.bones?.length);
+                        const skelHips = c.skeleton?.bones?.find(b => b.name.includes('Hips'));
+                        if (skelHips) {
+                            console.log('Skeleton Hips bone:', skelHips.name, 'uuid:', skelHips.uuid);
+                            console.log('SAME OBJECT?', skelHips === sceneBone);
+                        }
+                    }
+                });
+            }, 1000);
+
+            // Update UI
+            document.querySelectorAll('.anim-btn').forEach(btn => {
+                btn.classList.toggle('active', btn.textContent === name);
+            });
+
+            showStatus(`Playing: ${name}`, 'success');
+        }
+
+        // ============================================
+        // UI CONTROLS
+        // ============================================
+        function setupSliders() {
+            const speedSlider = document.getElementById('speed-slider');
+            const speedValue = document.getElementById('speed-value');
+
+            speedSlider.addEventListener('input', (e) => {
+                const speed = parseFloat(e.target.value);
+                speedValue.textContent = speed.toFixed(1) + 'x';
+
+                if (currentAction) {
+                    currentAction.timeScale = speed;
+                }
+            });
+
+            const distSlider = document.getElementById('dist-slider');
+            const distValue = document.getElementById('dist-value');
+
+            distSlider.addEventListener('input', (e) => {
+                const dist = parseFloat(e.target.value);
+                distValue.textContent = dist.toFixed(1);
+
+                const direction = camera.position.clone().sub(controls.target).normalize();
+                camera.position.copy(controls.target).addScaledVector(direction, dist);
+            });
+        }
+
+        function showStatus(message, type = 'info') {
+            const status = document.getElementById('status');
+            status.textContent = message;
+            status.className = type;
+            status.classList.remove('hidden');
+
+            if (type !== 'error') {
+                setTimeout(() => {
+                    status.classList.add('hidden');
+                }, 3000);
+            }
+        }
+
+        // ============================================
+        // AUTO-LOAD FOR TESTING
+        // ============================================
+        async function autoLoadTest() {
+            showStatus('Auto-loading test files...', 'info');
+
+            try {
+                // Load avatar
+                const avatarUrl = '/output/meshy_final.glb';
+                const avatarResponse = await fetch(avatarUrl);
+                const avatarBlob = await avatarResponse.blob();
+                const avatarFile = new File([avatarBlob], 'meshy_rigged.glb', { type: 'model/gltf-binary' });
+                await loadAvatar(avatarFile);
+
+                // Load animation
+                const animUrl = '/mixamo_fbx/Walking.fbx';
+                const animResponse = await fetch(animUrl);
+                const animBlob = await animResponse.blob();
+                const animFile = new File([animBlob], 'Walking.fbx', { type: 'application/octet-stream' });
+                await loadAnimation(animFile);
+
+            } catch (error) {
+                console.error('Auto-load error:', error);
+                showStatus(`Auto-load error: ${error.message}`, 'error');
+            }
+        }
+
+        // ============================================
+        // AUTO-LOAD FROM URL PARAMETER
+        // ============================================
+        async function autoLoadFromUrl(avatarPath) {
+            showStatus(`Loading: ${avatarPath}...`, 'info');
+
+            try {
+                const avatarUrl = '/' + avatarPath;
+                const avatarResponse = await fetch(avatarUrl);
+                if (!avatarResponse.ok) {
+                    throw new Error(`Failed to fetch ${avatarUrl}: ${avatarResponse.status}`);
+                }
+                const avatarBlob = await avatarResponse.blob();
+                const avatarFile = new File([avatarBlob], avatarPath.split('/').pop(), { type: 'model/gltf-binary' });
+                await loadAvatar(avatarFile);
+                showStatus('Avatar loaded successfully!', 'success');
+            } catch (error) {
+                console.error('Auto-load error:', error);
+                showStatus(`Load error: ${error.message}`, 'error');
+            }
+        }
+
+        // ============================================
+        // START
+        // ============================================
+        init();
+
+        // ============================================
+        // AUTO-LOAD ANIMATION FROM URL
+        // ============================================
+        async function autoLoadAnimFromUrl(animPath) {
+            showStatus(`Loading animation: ${animPath}...`, 'info');
+            try {
+                const animUrl = '/' + animPath;
+                const animResponse = await fetch(animUrl);
+                if (!animResponse.ok) {
+                    throw new Error(`Failed to fetch ${animUrl}: ${animResponse.status}`);
+                }
+                const animBlob = await animResponse.blob();
+                const animFile = new File([animBlob], animPath.split('/').pop(), { type: 'application/octet-stream' });
+                await loadAnimation(animFile);
+                showStatus('Animation loaded!', 'success');
+            } catch (error) {
+                console.error('Animation load error:', error);
+                showStatus(`Animation error: ${error.message}`, 'error');
+            }
+        }
+
+        // Check URL parameters
+        const urlParams = new URLSearchParams(window.location.search);
+        const avatarParam = urlParams.get('avatar');
+        const animParam = urlParams.get('anim');
+
+        if (avatarParam) {
+            // Load avatar from URL parameter
+            setTimeout(async () => {
+                await autoLoadFromUrl(avatarParam);
+                // Load animation if specified
+                if (animParam) {
+                    setTimeout(() => autoLoadAnimFromUrl(animParam), 500);
+                }
+            }, 500);
+        } else if (window.location.search.includes('test')) {
+            // Legacy test mode
+            setTimeout(autoLoadTest, 1000);
+        }
+    </script>
+</body>
+</html>

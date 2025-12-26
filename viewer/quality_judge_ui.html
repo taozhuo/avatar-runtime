@@ -1,0 +1,778 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Avatar Quality Judge - Gemini 3 Flash</title>
+    <link rel="icon" type="image/svg+xml" href="favicon.svg">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #1a1a2e;
+            color: #eee;
+            height: 100vh;
+            overflow: hidden;
+        }
+
+        .container {
+            display: flex;
+            height: 100vh;
+        }
+
+        /* Left Panel - Media Display */
+        .left-panel {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            border-right: 1px solid #333;
+            min-width: 0;
+        }
+
+        .panel-header {
+            padding: 15px 20px;
+            background: #252540;
+            border-bottom: 1px solid #333;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .panel-title {
+            font-size: 14px;
+            font-weight: 600;
+            color: #00d4ff;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .media-container {
+            flex: 1;
+            padding: 20px;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+        }
+
+        .upload-zone {
+            border: 2px dashed #444;
+            border-radius: 12px;
+            padding: 40px 20px;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.2s;
+            background: #252540;
+        }
+
+        .upload-zone:hover {
+            border-color: #00d4ff;
+            background: #2d2d50;
+        }
+
+        .upload-zone.dragover {
+            border-color: #00ff88;
+            background: #2d3d40;
+        }
+
+        .upload-icon {
+            font-size: 48px;
+            margin-bottom: 15px;
+        }
+
+        .upload-text {
+            color: #888;
+            margin-bottom: 10px;
+        }
+
+        .upload-hint {
+            font-size: 12px;
+            color: #666;
+        }
+
+        .media-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+            gap: 15px;
+        }
+
+        .media-item {
+            position: relative;
+            border-radius: 8px;
+            overflow: hidden;
+            background: #252540;
+            aspect-ratio: 1;
+        }
+
+        .media-item img,
+        .media-item video {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+
+        .media-item .remove-btn {
+            position: absolute;
+            top: 8px;
+            right: 8px;
+            width: 24px;
+            height: 24px;
+            border-radius: 50%;
+            background: rgba(255, 0, 0, 0.8);
+            border: none;
+            color: white;
+            cursor: pointer;
+            font-size: 14px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .media-item .media-label {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            padding: 8px;
+            background: rgba(0, 0, 0, 0.7);
+            font-size: 12px;
+            text-align: center;
+        }
+
+        .video-container {
+            width: 100%;
+            border-radius: 8px;
+            overflow: hidden;
+            background: #252540;
+        }
+
+        .video-container video {
+            width: 100%;
+            max-height: 400px;
+        }
+
+        /* Right Panel - Gemini Response */
+        .right-panel {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            min-width: 0;
+        }
+
+        .controls-bar {
+            padding: 15px 20px;
+            background: #252540;
+            border-bottom: 1px solid #333;
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+
+        .mode-tabs {
+            display: flex;
+            gap: 5px;
+        }
+
+        .mode-tab {
+            padding: 8px 16px;
+            border: none;
+            border-radius: 6px;
+            background: #333;
+            color: #888;
+            cursor: pointer;
+            font-size: 13px;
+            transition: all 0.2s;
+        }
+
+        .mode-tab:hover {
+            background: #444;
+            color: #ccc;
+        }
+
+        .mode-tab.active {
+            background: #00d4ff;
+            color: #000;
+        }
+
+        .judge-btn {
+            margin-left: auto;
+            padding: 10px 24px;
+            border: none;
+            border-radius: 6px;
+            background: linear-gradient(135deg, #00d4ff, #00ff88);
+            color: #000;
+            font-weight: 600;
+            cursor: pointer;
+            font-size: 14px;
+            transition: all 0.2s;
+        }
+
+        .judge-btn:hover {
+            transform: scale(1.02);
+            box-shadow: 0 4px 20px rgba(0, 212, 255, 0.3);
+        }
+
+        .judge-btn:disabled {
+            background: #444;
+            color: #666;
+            cursor: not-allowed;
+            transform: none;
+            box-shadow: none;
+        }
+
+        .response-container {
+            flex: 1;
+            padding: 20px;
+            overflow-y: auto;
+        }
+
+        .response-card {
+            background: #252540;
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 15px;
+        }
+
+        .response-header {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 15px;
+        }
+
+        .status-badge {
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+
+        .status-badge.valid {
+            background: rgba(0, 255, 136, 0.2);
+            color: #00ff88;
+        }
+
+        .status-badge.invalid {
+            background: rgba(255, 68, 68, 0.2);
+            color: #ff4444;
+        }
+
+        .status-badge.pending {
+            background: rgba(255, 200, 0, 0.2);
+            color: #ffc800;
+        }
+
+        .confidence-bar {
+            height: 6px;
+            background: #333;
+            border-radius: 3px;
+            overflow: hidden;
+            margin: 10px 0;
+        }
+
+        .confidence-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #00d4ff, #00ff88);
+            transition: width 0.5s ease;
+        }
+
+        .response-section {
+            margin-top: 15px;
+        }
+
+        .section-title {
+            font-size: 12px;
+            text-transform: uppercase;
+            color: #888;
+            margin-bottom: 8px;
+            letter-spacing: 1px;
+        }
+
+        .issues-list {
+            list-style: none;
+        }
+
+        .issues-list li {
+            padding: 8px 12px;
+            background: rgba(255, 68, 68, 0.1);
+            border-left: 3px solid #ff4444;
+            margin-bottom: 8px;
+            border-radius: 0 6px 6px 0;
+            font-size: 14px;
+        }
+
+        .details-text {
+            color: #aaa;
+            line-height: 1.6;
+            font-size: 14px;
+        }
+
+        .frame-issues {
+            margin-top: 10px;
+        }
+
+        .frame-issue {
+            display: flex;
+            gap: 10px;
+            padding: 8px;
+            background: #1a1a2e;
+            border-radius: 6px;
+            margin-bottom: 8px;
+            font-size: 13px;
+        }
+
+        .frame-time {
+            color: #00d4ff;
+            font-weight: 600;
+            min-width: 60px;
+        }
+
+        .loading-spinner {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 40px;
+        }
+
+        .spinner {
+            width: 40px;
+            height: 40px;
+            border: 3px solid #333;
+            border-top-color: #00d4ff;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .empty-state {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100%;
+            color: #666;
+            text-align: center;
+            padding: 40px;
+        }
+
+        .empty-state-icon {
+            font-size: 64px;
+            margin-bottom: 20px;
+        }
+
+        .context-input {
+            width: 100%;
+            padding: 10px 15px;
+            background: #1a1a2e;
+            border: 1px solid #333;
+            border-radius: 6px;
+            color: #eee;
+            font-size: 13px;
+            margin-top: 10px;
+        }
+
+        .context-input:focus {
+            outline: none;
+            border-color: #00d4ff;
+        }
+
+        .history-list {
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- Left Panel - Media Display -->
+        <div class="left-panel">
+            <div class="panel-header">
+                <span class="panel-title">Media Input</span>
+                <button class="mode-tab" onclick="loadTestImages()" style="background: #00d4ff; color: black;">Load Test Images</button>
+                <button class="mode-tab" onclick="clearMedia()" style="background: #ff4444; color: white;">Clear All</button>
+            </div>
+            <div class="media-container">
+                <div class="upload-zone" id="upload-zone" onclick="document.getElementById('file-input').click()">
+                    <div class="upload-icon">📁</div>
+                    <div class="upload-text">Drop images or video here</div>
+                    <div class="upload-hint">Supports: PNG, JPG, WEBP, MP4, WEBM, MOV</div>
+                </div>
+                <input type="file" id="file-input" multiple accept="image/*,video/*" style="display: none;">
+
+                <div class="media-grid" id="image-grid"></div>
+                <div class="video-container" id="video-container" style="display: none;"></div>
+
+                <div class="response-section" style="margin-top: 20px;">
+                    <div class="section-title">Additional Context (Optional)</div>
+                    <input type="text" class="context-input" id="context-input" placeholder="e.g., 'This is a T-pose reference' or 'Check the arm deformation'">
+                </div>
+            </div>
+        </div>
+
+        <!-- Right Panel - Gemini Response -->
+        <div class="right-panel">
+            <div class="controls-bar">
+                <div class="mode-tabs">
+                    <button class="mode-tab active" id="pose-tab" onclick="setMode('pose')">Pose Check</button>
+                    <button class="mode-tab" id="anim-tab" onclick="setMode('animation')">Animation Check</button>
+                </div>
+                <button class="judge-btn" id="judge-btn" onclick="runJudgment()" disabled>
+                    Analyze with Gemini
+                </button>
+            </div>
+            <div class="response-container" id="response-container">
+                <div class="empty-state">
+                    <div class="empty-state-icon">🤖</div>
+                    <div>Upload media and click "Analyze with Gemini"<br>to check avatar quality</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // State
+        let currentMode = 'pose';
+        let uploadedImages = [];
+        let uploadedVideo = null;
+        let isAnalyzing = false;
+
+        // API endpoint
+        const API_BASE = 'http://localhost:8081';
+
+        // Mode switching
+        function setMode(mode) {
+            currentMode = mode;
+            document.getElementById('pose-tab').classList.toggle('active', mode === 'pose');
+            document.getElementById('anim-tab').classList.toggle('active', mode === 'animation');
+            updateJudgeButton();
+        }
+
+        // File upload handling
+        const uploadZone = document.getElementById('upload-zone');
+        const fileInput = document.getElementById('file-input');
+
+        uploadZone.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            uploadZone.classList.add('dragover');
+        });
+
+        uploadZone.addEventListener('dragleave', () => {
+            uploadZone.classList.remove('dragover');
+        });
+
+        uploadZone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            uploadZone.classList.remove('dragover');
+            handleFiles(e.dataTransfer.files);
+        });
+
+        fileInput.addEventListener('change', (e) => {
+            handleFiles(e.target.files);
+        });
+
+        function handleFiles(files) {
+            for (const file of files) {
+                if (file.type.startsWith('image/')) {
+                    addImage(file);
+                } else if (file.type.startsWith('video/')) {
+                    setVideo(file);
+                }
+            }
+            updateJudgeButton();
+        }
+
+        function addImage(file) {
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                const imageData = {
+                    file: file,
+                    dataUrl: e.target.result,
+                    name: file.name
+                };
+                uploadedImages.push(imageData);
+                renderImageGrid();
+                updateJudgeButton();
+            };
+            reader.readAsDataURL(file);
+        }
+
+        function setVideo(file) {
+            uploadedVideo = file;
+            const videoContainer = document.getElementById('video-container');
+            videoContainer.style.display = 'block';
+            videoContainer.innerHTML = `
+                <video controls>
+                    <source src="${URL.createObjectURL(file)}" type="${file.type}">
+                </video>
+                <div class="media-label">${file.name}</div>
+            `;
+            // Auto-switch to animation mode
+            setMode('animation');
+            updateJudgeButton();
+        }
+
+        function renderImageGrid() {
+            const grid = document.getElementById('image-grid');
+            const angleLabels = ['Front', 'Side', 'Back', 'Extra'];
+
+            grid.innerHTML = uploadedImages.map((img, i) => `
+                <div class="media-item">
+                    <img src="${img.dataUrl}" alt="${img.name}">
+                    <button class="remove-btn" onclick="removeImage(${i})">×</button>
+                    <div class="media-label">${angleLabels[i] || `View ${i+1}`}: ${img.name}</div>
+                </div>
+            `).join('');
+        }
+
+        function removeImage(index) {
+            uploadedImages.splice(index, 1);
+            renderImageGrid();
+            updateJudgeButton();
+        }
+
+        function clearMedia() {
+            uploadedImages = [];
+            uploadedVideo = null;
+            document.getElementById('image-grid').innerHTML = '';
+            document.getElementById('video-container').style.display = 'none';
+            document.getElementById('video-container').innerHTML = '';
+            updateJudgeButton();
+        }
+
+        function updateJudgeButton() {
+            const btn = document.getElementById('judge-btn');
+            const hasMedia = (currentMode === 'pose' && uploadedImages.length > 0) ||
+                           (currentMode === 'animation' && (uploadedVideo || uploadedImages.length > 0));
+            btn.disabled = !hasMedia || isAnalyzing;
+            btn.textContent = isAnalyzing ? 'Analyzing...' : 'Analyze with Gemini';
+        }
+
+        // Load test images from output folder
+        async function loadTestImages() {
+            const testImages = [
+                '/output/angles/front.png',
+                '/output/angles/back.png'
+            ];
+
+            clearMedia();
+
+            for (const imgPath of testImages) {
+                try {
+                    const response = await fetch(imgPath);
+                    if (!response.ok) continue;
+                    const blob = await response.blob();
+                    const file = new File([blob], imgPath.split('/').pop(), { type: 'image/png' });
+
+                    const reader = new FileReader();
+                    reader.onload = (e) => {
+                        uploadedImages.push({
+                            file: file,
+                            dataUrl: e.target.result,
+                            name: file.name
+                        });
+                        renderImageGrid();
+                        updateJudgeButton();
+                    };
+                    reader.readAsDataURL(blob);
+                } catch (err) {
+                    console.error('Failed to load test image:', imgPath, err);
+                }
+            }
+        }
+
+        // Run analysis
+        async function runJudgment() {
+            if (isAnalyzing) return;
+
+            isAnalyzing = true;
+            updateJudgeButton();
+            showLoading();
+
+            try {
+                const context = document.getElementById('context-input').value;
+                let result;
+
+                if (currentMode === 'pose') {
+                    result = await judgePose(uploadedImages, context);
+                } else {
+                    if (uploadedVideo) {
+                        result = await judgeAnimationVideo(uploadedVideo, context);
+                    } else {
+                        result = await judgeAnimationFrames(uploadedImages, context);
+                    }
+                }
+
+                showResult(result);
+            } catch (error) {
+                showError(error.message);
+            } finally {
+                isAnalyzing = false;
+                updateJudgeButton();
+            }
+        }
+
+        async function judgePose(images, context) {
+            const formData = new FormData();
+            images.forEach((img, i) => {
+                formData.append('images', img.file);
+            });
+            if (context) {
+                formData.append('context', context);
+            }
+
+            const response = await fetch(`${API_BASE}/judge/pose`, {
+                method: 'POST',
+                body: formData
+            });
+
+            if (!response.ok) {
+                throw new Error(`Server error: ${response.status}`);
+            }
+
+            return await response.json();
+        }
+
+        async function judgeAnimationVideo(video, context) {
+            const formData = new FormData();
+            formData.append('video', video);
+            if (context) {
+                formData.append('context', context);
+            }
+
+            const response = await fetch(`${API_BASE}/judge/animation`, {
+                method: 'POST',
+                body: formData
+            });
+
+            if (!response.ok) {
+                throw new Error(`Server error: ${response.status}`);
+            }
+
+            return await response.json();
+        }
+
+        async function judgeAnimationFrames(frames, context) {
+            const formData = new FormData();
+            frames.forEach((frame, i) => {
+                formData.append('frames', frame.file);
+            });
+            if (context) {
+                formData.append('context', context);
+            }
+
+            const response = await fetch(`${API_BASE}/judge/animation-frames`, {
+                method: 'POST',
+                body: formData
+            });
+
+            if (!response.ok) {
+                throw new Error(`Server error: ${response.status}`);
+            }
+
+            return await response.json();
+        }
+
+        // Display functions
+        function showLoading() {
+            document.getElementById('response-container').innerHTML = `
+                <div class="loading-spinner">
+                    <div class="spinner"></div>
+                </div>
+            `;
+        }
+
+        function showResult(result) {
+            const container = document.getElementById('response-container');
+            const isValid = result.is_valid;
+            const confidence = result.confidence || 0;
+            const issues = result.issues || [];
+            const details = result.details || '';
+            const frameIssues = result.frame_issues || [];
+
+            container.innerHTML = `
+                <div class="response-card">
+                    <div class="response-header">
+                        <span class="status-badge ${isValid ? 'valid' : 'invalid'}">
+                            ${isValid ? '✓ Valid' : '✗ Issues Found'}
+                        </span>
+                        <span style="color: #888; font-size: 13px;">
+                            Confidence: ${(confidence * 100).toFixed(0)}%
+                        </span>
+                    </div>
+
+                    <div class="confidence-bar">
+                        <div class="confidence-fill" style="width: ${confidence * 100}%"></div>
+                    </div>
+
+                    ${issues.length > 0 ? `
+                        <div class="response-section">
+                            <div class="section-title">Issues Detected</div>
+                            <ul class="issues-list">
+                                ${issues.map(issue => `<li>${issue}</li>`).join('')}
+                            </ul>
+                        </div>
+                    ` : ''}
+
+                    <div class="response-section">
+                        <div class="section-title">Analysis Details</div>
+                        <p class="details-text">${details}</p>
+                    </div>
+
+                    ${frameIssues.length > 0 ? `
+                        <div class="response-section">
+                            <div class="section-title">Frame-Specific Issues</div>
+                            <div class="frame-issues">
+                                ${frameIssues.map(fi => `
+                                    <div class="frame-issue">
+                                        <span class="frame-time">${fi.timestamp}</span>
+                                        <span>${fi.issue}</span>
+                                    </div>
+                                `).join('')}
+                            </div>
+                        </div>
+                    ` : ''}
+                </div>
+            `;
+        }
+
+        function showError(message) {
+            document.getElementById('response-container').innerHTML = `
+                <div class="response-card">
+                    <div class="response-header">
+                        <span class="status-badge invalid">Error</span>
+                    </div>
+                    <div class="response-section">
+                        <div class="section-title">Error Details</div>
+                        <p class="details-text">${message}</p>
+                        <p class="details-text" style="margin-top: 10px; color: #888;">
+                            Make sure the backend server is running:<br>
+                            <code style="background: #1a1a2e; padding: 4px 8px; border-radius: 4px;">
+                                python quality_judge_server.py
+                            </code>
+                        </p>
+                    </div>
+                </div>
+            `;
+        }
+
+        // Auto-load and analyze on page load if ?auto param present
+        const urlParams = new URLSearchParams(window.location.search);
+        if (urlParams.has('auto')) {
+            setTimeout(async () => {
+                await loadTestImages();
+                setTimeout(() => runJudgment(), 500);
+            }, 500);
+        }
+    </script>
+</body>
+</html>

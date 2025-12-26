@@ -4,8 +4,16 @@
 requests>=2.31.0
 python-dotenv>=1.0.0
 
+# Web Server (for Quality Judge UI)
+fastapi>=0.104.0
+uvicorn>=0.24.0
+python-multipart>=0.0.6
+
 # Google Gemini VLM
 google-generativeai>=0.3.0
+
+# Google Gemini 3 Flash (new SDK)
+google-genai>=1.51.0
 
 # Note: Blender has its own bundled Python with bpy
 # Install Blender separately: https://www.blender.org/download/

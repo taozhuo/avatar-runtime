@@ -73,8 +73,8 @@ class MediaPipePoseDetector:
             base_options=base_options,
             output_segmentation_masks=False,
             num_poses=1,
-            min_pose_detection_confidence=0.5,
-            min_tracking_confidence=0.5
+            min_pose_detection_confidence=0.2,  # Lower threshold for stylized characters
+            min_tracking_confidence=0.2
         )
         self.landmarker = vision.PoseLandmarker.create_from_options(options)
 

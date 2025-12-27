@@ -110,7 +110,7 @@ class BakableAIPipeline:
 
     def perceive_joints(self, image_path: Path) -> dict:
         """
-        Phase 1A: Use MediaPipe to detect joint positions.
+        Phase 1A: Use VLM to detect joint positions.
 
         Args:
             image_path: Path to front-view screenshot
@@ -118,10 +118,11 @@ class BakableAIPipeline:
         Returns:
             Dict of joint markers with normalized coordinates
         """
-        from vision_pipe import detect_pose
+        from vlm_agent import VLMAgent
 
-        markers = detect_pose(str(image_path))
-        return markers
+        agent = VLMAgent()
+        markers = agent.perceive_joints(str(image_path))
+        return markers.to_dict()
 
     def auto_rig(self, mesh_path: Path, markers: dict, output_name: str = "avatar_rigged.glb") -> Path:
         """

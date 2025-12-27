@@ -411,8 +411,33 @@ class BlenderRigger:
 
         bpy.context.scene.camera = camera
 
-        # Setup lighting
+        # Setup dark background for high contrast
+        world = bpy.context.scene.world
+        if not world:
+            world = bpy.data.worlds.new("World")
+            bpy.context.scene.world = world
+        world.use_nodes = True
+        bg_node = world.node_tree.nodes.get("Background")
+        if bg_node:
+            bg_node.inputs["Color"].default_value = (0.5, 0.5, 0.55, 1.0)  # Medium grey
+            bg_node.inputs["Strength"].default_value = 1.0
+
+        # Setup very strong lighting for MediaPipe detection
         bpy.ops.object.light_add(type='SUN', location=(0, -2, 3))
+        sun = bpy.context.object
+        sun.data.energy = 10.0
+
+        # Add strong fill light from front
+        bpy.ops.object.light_add(type='AREA', location=(0, -4, 1))
+        fill = bpy.context.object
+        fill.data.energy = 500
+        fill.rotation_euler = (math.radians(90), 0, 0)
+
+        # Add rim light from behind
+        bpy.ops.object.light_add(type='AREA', location=(0, 3, 2))
+        rim = bpy.context.object
+        rim.data.energy = 300
+        rim.rotation_euler = (math.radians(-90), 0, 0)
 
         # Render settings
         bpy.context.scene.render.resolution_x = resolution
@@ -420,17 +445,7 @@ class BlenderRigger:
         bpy.context.scene.render.image_settings.file_format = 'PNG'
         bpy.context.scene.render.filepath = output_path
 
-        # Make mesh grey for contrast
-        if self.mesh_obj.data.materials:
-            mat = self.mesh_obj.data.materials[0]
-        else:
-            mat = bpy.data.materials.new(name="Grey")
-            self.mesh_obj.data.materials.append(mat)
-
-        mat.use_nodes = True
-        bsdf = mat.node_tree.nodes.get("Principled BSDF")
-        if bsdf:
-            bsdf.inputs["Base Color"].default_value = (0.5, 0.5, 0.5, 1.0)
+        # Keep original materials - don't override
 
         # Render
         bpy.ops.render.render(write_still=True)
@@ -515,6 +530,14 @@ class BlenderRigger:
         self.mesh_obj.select_set(True)
         self.armature_obj.select_set(True)
         bpy.context.view_layer.objects.active = self.armature_obj
+
+        # Rotate both mesh and armature to fix orientation for glTF
+        self.mesh_obj.rotation_euler[0] = math.radians(90)
+        self.armature_obj.rotation_euler[0] = math.radians(90)
+        bpy.context.view_layer.objects.active = self.mesh_obj
+        bpy.ops.object.transform_apply(location=False, rotation=True, scale=False)
+        bpy.context.view_layer.objects.active = self.armature_obj
+        bpy.ops.object.transform_apply(location=False, rotation=True, scale=False)
 
         # Export with settings to ensure FBX/GLB compatibility
         bpy.ops.export_scene.gltf(

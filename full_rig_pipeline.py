@@ -114,49 +114,71 @@ def render_front_view(mesh_obj, output_dir: str):
     """Render front view for YOLO11. Returns (image_path, camera)"""
     print("  Rendering front view...")
 
-    bpy.context.scene.render.engine = 'BLENDER_EEVEE_NEXT'
+    # Use WORKBENCH engine - renders solid colors directly
+    bpy.context.scene.render.engine = 'BLENDER_WORKBENCH'
     bpy.context.scene.render.resolution_x = 1024
     bpy.context.scene.render.resolution_y = 1024
     bpy.context.scene.render.film_transparent = False
 
-    # Gray background
+    # Workbench settings - solid black object on white background
+    shading = bpy.context.scene.display.shading
+    shading.light = 'STUDIO'
+    shading.color_type = 'SINGLE'
+    shading.single_color = (0.05, 0.05, 0.05)  # Dark/black
+    shading.background_type = 'VIEWPORT'
+    shading.background_color = (1.0, 1.0, 1.0)  # White
+
+    # Also set world background for WORKBENCH
     world = bpy.context.scene.world
     if world is None:
         world = bpy.data.worlds.new("World")
         bpy.context.scene.world = world
-    world.use_nodes = True
-    bg_node = world.node_tree.nodes.get("Background")
-    if bg_node:
-        bg_node.inputs['Color'].default_value = (0.7, 0.7, 0.7, 1.0)
+    world.use_nodes = False
+    world.color = (1.0, 1.0, 1.0)  # White background
 
     # Remove existing cameras/lights
     for obj in bpy.data.objects:
         if obj.type in ['CAMERA', 'LIGHT']:
             bpy.data.objects.remove(obj, do_unlink=True)
 
-    # Lighting
-    bpy.ops.object.light_add(type='AREA', location=(3, -5, 8))
-    bpy.context.active_object.data.energy = 500
-    bpy.ops.object.light_add(type='AREA', location=(-3, -4, 5))
-    bpy.context.active_object.data.energy = 200
+    # Strong 3-point lighting
+    min_pt, max_pt, center = get_mesh_bounds(mesh_obj)
+    height = max_pt.z - min_pt.z
 
-    # Camera
+    # Key light (front-left, bright)
+    bpy.ops.object.light_add(type='AREA', location=(2, -4, center.z + height * 0.5))
+    key = bpy.context.active_object
+    key.data.energy = 800
+    key.data.size = 3
+    key.rotation_euler = (0.8, 0, 0.3)
+
+    # Fill light (front-right, softer)
+    bpy.ops.object.light_add(type='AREA', location=(-2, -3, center.z + height * 0.3))
+    fill = bpy.context.active_object
+    fill.data.energy = 400
+    fill.data.size = 2
+
+    # Rim light (back, for edge definition)
+    bpy.ops.object.light_add(type='AREA', location=(0, 4, center.z + height * 0.7))
+    rim = bpy.context.active_object
+    rim.data.energy = 600
+    rim.data.size = 2
+
+    # Camera - front view
     bpy.ops.object.camera_add()
     camera = bpy.context.active_object
     bpy.context.scene.camera = camera
 
-    min_pt, max_pt, center = get_mesh_bounds(mesh_obj)
-    height = max_pt.z - min_pt.z
-    cam_distance = height * 2.0
-
-    camera.location = Vector((center.x, center.y - cam_distance, min_pt.z + height * 0.5))
+    cam_distance = height * 2.2
+    camera.location = Vector((center.x, center.y - cam_distance, center.z))
     direction = center - camera.location
     camera.rotation_euler = direction.to_track_quat('-Z', 'Y').to_euler()
-    camera.data.lens = 35
+    camera.data.lens = 50
 
     output_path = os.path.join(output_dir, "render.png")
     bpy.context.scene.render.filepath = output_path
     bpy.ops.render.render(write_still=True)
+    print(f"  Rendered: {output_path}")
     return output_path, camera
 
 
@@ -221,6 +243,72 @@ else:
         print(f"  Detected {len(data['landmarks'])} landmarks")
         return data['landmarks']
     return None
+
+
+def create_overlay(render_path: str, landmarks: dict, bone_positions: dict, output_dir: str):
+    """Create overlay image with YOLO landmarks and bone positions"""
+    print("  Creating overlay visualization...")
+
+    script = '''
+import sys, json
+from PIL import Image, ImageDraw
+
+render_path = sys.argv[1]
+landmarks = json.loads(sys.argv[2])
+bone_positions = json.loads(sys.argv[3])
+output_path = sys.argv[4]
+
+img = Image.open(render_path)
+draw = ImageDraw.Draw(img)
+w, h = img.size
+
+# Draw YOLO landmarks (red)
+for name, lm in landmarks.items():
+    x = int(lm['x'] * w)
+    y = int(lm['y'] * h)
+    draw.ellipse([x-8, y-8, x+8, y+8], fill='red', outline='white')
+
+# Draw skeleton connections (green lines)
+connections = [
+    ('left_shoulder', 'right_shoulder'),
+    ('left_shoulder', 'left_elbow'), ('left_elbow', 'left_wrist'),
+    ('right_shoulder', 'right_elbow'), ('right_elbow', 'right_wrist'),
+    ('left_shoulder', 'left_hip'), ('right_shoulder', 'right_hip'),
+    ('left_hip', 'right_hip'),
+    ('left_hip', 'left_knee'), ('left_knee', 'left_ankle'),
+    ('right_hip', 'right_knee'), ('right_knee', 'right_ankle'),
+]
+
+for a, b in connections:
+    if a in landmarks and b in landmarks:
+        x1 = int(landmarks[a]['x'] * w)
+        y1 = int(landmarks[a]['y'] * h)
+        x2 = int(landmarks[b]['x'] * w)
+        y2 = int(landmarks[b]['y'] * h)
+        draw.line([x1, y1, x2, y2], fill='lime', width=3)
+
+img.save(output_path)
+print(f"Saved overlay: {output_path}")
+'''
+
+    script_path = os.path.join(tempfile.gettempdir(), 'create_overlay.py')
+    output_path = os.path.join(output_dir, "overlay.png")
+
+    with open(script_path, 'w') as f:
+        f.write(script)
+
+    # Convert bone_positions to serializable format
+    bp_json = {k: [v.x, v.y, v.z] for k, v in bone_positions.items()}
+
+    subprocess.run([
+        'python3', script_path,
+        render_path,
+        json.dumps(landmarks),
+        json.dumps(bp_json),
+        output_path
+    ], capture_output=True)
+
+    print(f"  Overlay saved: {output_path}")
 
 
 def raycast_to_mesh(mesh_obj, ray_origin: Vector, ray_direction: Vector) -> Vector:
@@ -750,6 +838,8 @@ def run_pipeline(mesh_path: str, skeleton_path: str, fbx_dir: str, output_dir: s
     print("\n[Step 3] Fitting skeleton...")
     if landmarks:
         bone_positions = map_landmarks_to_bones(landmarks, mesh_obj, camera, bpy.context.scene)
+        # Create overlay visualization
+        create_overlay(render_path, landmarks, bone_positions, output_dir)
     else:
         print("  YOLO11 failed, using mesh estimation...")
         bone_positions = estimate_from_mesh(mesh_obj)

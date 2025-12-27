@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Multi-Avatar Viewer</title>
+    <style>
+        body { margin: 0; background: #1a1a2e; overflow: hidden; font-family: Arial; }
+        #container { width: 100vw; height: 100vh; }
+        #controls {
+            position: fixed; top: 10px; left: 10px; z-index: 100;
+            background: rgba(0,0,0,0.8); padding: 15px; border-radius: 8px;
+            color: white; max-height: 90vh; overflow-y: auto;
+        }
+        button {
+            display: block; width: 100%; margin: 5px 0; padding: 10px;
+            background: #4a4a6a; border: none; color: white; cursor: pointer;
+            border-radius: 4px; font-size: 14px;
+        }
+        button:hover { background: #6a6a8a; }
+        button.active { background: #2ecc71; }
+        h3 { margin: 10px 0 5px 0; color: #888; font-size: 12px; }
+    </style>
+</head>
+<body>
+    <div id="controls">
+        <h2>Multi-Avatar Scene</h2>
+        <h3>ANIMATIONS</h3>
+        <div id="anim-buttons"></div>
+    </div>
+    <div id="container"></div>
+
+    <script type="importmap">
+    {
+        "imports": {
+            "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+            "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+        }
+    }
+    </script>
+    <script type="module">
+        import * as THREE from 'three';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+        import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x1a1a2e);
+
+        const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 100);
+        camera.position.set(0, 1.5, 8);
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.shadowMap.enabled = true;
+        document.getElementById('container').appendChild(renderer.domElement);
+
+        const controls = new OrbitControls(camera, renderer.domElement);
+        controls.target.set(0, 1, 0);
+        controls.update();
+
+        // Lighting
+        const ambient = new THREE.AmbientLight(0xffffff, 0.5);
+        scene.add(ambient);
+        const dirLight = new THREE.DirectionalLight(0xffffff, 1);
+        dirLight.position.set(5, 10, 5);
+        dirLight.castShadow = true;
+        scene.add(dirLight);
+
+        // Ground
+        const ground = new THREE.Mesh(
+            new THREE.PlaneGeometry(20, 20),
+            new THREE.MeshStandardMaterial({ color: 0x2a2a4a })
+        );
+        ground.rotation.x = -Math.PI / 2;
+        ground.receiveShadow = true;
+        scene.add(ground);
+
+        // Grid
+        const grid = new THREE.GridHelper(20, 20, 0x444466, 0x333355);
+        scene.add(grid);
+
+        const avatars = [
+            { name: 'scifi', path: '../output/meshy_scifi/rigged_character.glb', x: -3 },
+            { name: 'fantasy', path: '../output/meshy_fantasy/rigged_character.glb', x: -1.8 },
+            { name: 'horror', path: '../output/meshy_horror/rigged_character.glb', x: -0.6 },
+            { name: 'robot', path: '../output/meshy_robot/rigged_character.glb', x: 0.6 },
+            { name: 'fat', path: '../output/meshy_fat/rigged_character.glb', x: 1.8 },
+            { name: 'thin', path: '../output/meshy_thin/rigged_character.glb', x: 3 },
+        ];
+
+        const mixers = [];
+        const loader = new GLTFLoader();
+        let animationNames = [];
+
+        avatars.forEach((avatar, index) => {
+            loader.load(avatar.path, (gltf) => {
+                const model = gltf.scene;
+                model.position.x = avatar.x;
+                model.traverse(c => { if (c.isMesh) { c.castShadow = true; c.receiveShadow = true; }});
+                scene.add(model);
+
+                const mixer = new THREE.AnimationMixer(model);
+                mixers.push({ mixer, animations: gltf.animations, name: avatar.name });
+
+                // Build animation buttons from first loaded model
+                if (animationNames.length === 0 && gltf.animations.length > 0) {
+                    animationNames = gltf.animations.map(a => a.name);
+                    const container = document.getElementById('anim-buttons');
+                    animationNames.forEach(name => {
+                        const btn = document.createElement('button');
+                        btn.textContent = name;
+                        btn.onclick = () => playAnimation(name);
+                        container.appendChild(btn);
+                    });
+                }
+
+                console.log(`Loaded ${avatar.name} with ${gltf.animations.length} animations`);
+            });
+        });
+
+        function playAnimation(name) {
+            // Update button states
+            document.querySelectorAll('#anim-buttons button').forEach(btn => {
+                btn.classList.toggle('active', btn.textContent === name);
+            });
+
+            // Play on all avatars
+            mixers.forEach(({ mixer, animations }) => {
+                mixer.stopAllAction();
+                const clip = animations.find(a => a.name === name);
+                if (clip) {
+                    const action = mixer.clipAction(clip);
+                    action.reset().play();
+                }
+            });
+        }
+
+        const clock = new THREE.Clock();
+        function animate() {
+            requestAnimationFrame(animate);
+            const delta = clock.getDelta();
+            mixers.forEach(({ mixer }) => mixer.update(delta));
+            renderer.render(scene, camera);
+        }
+        animate();
+
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+    </script>
+</body>
+</html>

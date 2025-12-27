@@ -270,6 +270,7 @@ for name, lm in landmarks.items():
 
 # Draw skeleton connections (green lines)
 connections = [
+    ('nose', 'left_shoulder'), ('nose', 'right_shoulder'),  # Head to body
     ('left_shoulder', 'right_shoulder'),
     ('left_shoulder', 'left_elbow'), ('left_elbow', 'left_wrist'),
     ('right_shoulder', 'right_elbow'), ('right_elbow', 'right_wrist'),
@@ -503,8 +504,7 @@ def load_and_fit_skeleton(skeleton_path: str, bone_positions: dict):
 
 def apply_distance_weights(mesh_obj, armature):
     """
-    Apply skin weights using distance-based algorithm.
-    Similar to Mesh2Motion's SolverDistanceChildTargeting.
+    Apply skin weights - closest bone gets 100%, with blending only at joints.
     """
     print("\n[Step 4] Applying distance-based skin weights...")
 
@@ -518,75 +518,138 @@ def apply_distance_weights(mesh_obj, armature):
     for bone in bones:
         mesh_obj.vertex_groups.new(name=bone.name)
 
-    # Get bone midpoints (between head and tail) - like Mesh2Motion's median approach
-    bone_midpoints = {}
+    # Get bone segments
+    bone_data = {}
     for bone in bones:
         if bone.name == 'root':
             continue
         head = armature.matrix_world @ bone.head_local
         tail = armature.matrix_world @ bone.tail_local
-        bone_midpoints[bone.name] = (head + tail) / 2
+        bone_data[bone.name] = {'head': head, 'tail': tail, 'mid': (head + tail) / 2, 'bone': bone}
+
+    # Define joint pairs that should blend (parent-child connections)
+    # Use actual bone names from rig-human.glb
+    joint_pairs = [
+        ('DEF-neck', 'DEF-head'),
+        ('DEF-spine.003', 'DEF-neck'),
+        ('DEF-spine.002', 'DEF-spine.003'),
+        ('DEF-spine.001', 'DEF-spine.002'),
+        ('DEF-hips', 'DEF-spine.001'),
+        ('DEF-spine.003', 'DEF-shoulder.L'), ('DEF-shoulder.L', 'DEF-upper_arm.L'),
+        ('DEF-upper_arm.L', 'DEF-forearm.L'), ('DEF-forearm.L', 'DEF-hand.L'),
+        ('DEF-spine.003', 'DEF-shoulder.R'), ('DEF-shoulder.R', 'DEF-upper_arm.R'),
+        ('DEF-upper_arm.R', 'DEF-forearm.R'), ('DEF-forearm.R', 'DEF-hand.R'),
+        ('DEF-hips', 'DEF-thigh.L'), ('DEF-thigh.L', 'DEF-shin.L'),
+        ('DEF-shin.L', 'DEF-foot.L'), ('DEF-foot.L', 'DEF-toe.L'),
+        ('DEF-hips', 'DEF-thigh.R'), ('DEF-thigh.R', 'DEF-shin.R'),
+        ('DEF-shin.R', 'DEF-foot.R'), ('DEF-foot.R', 'DEF-toe.R'),
+    ]
+
+    def point_to_segment_dist(p, a, b):
+        """Distance from point p to line segment a-b"""
+        ab = b - a
+        ap = p - a
+        t = max(0, min(1, ap.dot(ab) / max(ab.dot(ab), 0.0001)))
+        closest = a + ab * t
+        return (p - closest).length
+
+    # Get mesh bounds for position-based hints
+    bbox = [mesh_obj.matrix_world @ Vector(c) for c in mesh_obj.bound_box]
+    min_z = min(v.z for v in bbox)
+    max_z = max(v.z for v in bbox)
+    height = max_z - min_z
+    hip_height = min_z + height * 0.5  # Approximate hip level
+
+    # Bones that should be preferred for torso (above hips)
+    torso_bones = {'DEF-hips', 'DEF-spine.001', 'DEF-spine.002', 'DEF-spine.003', 'DEF-neck', 'DEF-head'}
+    leg_bones = {'DEF-thigh.L', 'DEF-thigh.R', 'DEF-shin.L', 'DEF-shin.R', 'DEF-foot.L', 'DEF-foot.R'}
 
     print(f"  Processing {len(mesh.vertices)} vertices...")
-
-    # First pass: assign closest bone (100% weight)
-    vertex_bones = {}  # vertex_index -> bone_name
 
     for vert in mesh.vertices:
         vert_pos = mesh_obj.matrix_world @ vert.co
 
+        # Find closest bone with position-based bias
         closest_bone = None
         closest_dist = float('inf')
+        for bone_name, bd in bone_data.items():
+            dist = point_to_segment_dist(vert_pos, bd['head'], bd['tail'])
 
-        for bone_name, bone_pos in bone_midpoints.items():
-            dist = (vert_pos - bone_pos).length
+            # Penalize leg bones for vertices in torso region
+            if vert_pos.z > hip_height and bone_name in leg_bones:
+                dist *= 2.0  # Make leg bones less attractive for torso vertices
+
+            # Penalize torso bones for vertices clearly in leg region
+            if vert_pos.z < hip_height - 0.1 and bone_name in torso_bones:
+                dist *= 1.5
+
             if dist < closest_dist:
                 closest_dist = dist
                 closest_bone = bone_name
 
-        if closest_bone:
-            vertex_bones[vert.index] = closest_bone
-            vg = mesh_obj.vertex_groups[closest_bone]
-            vg.add([vert.index], 1.0, 'REPLACE')
-
-    # Second pass: smooth boundaries (like Mesh2Motion's smooth_bone_weight_boundaries)
-    print("  Smoothing weight boundaries...")
-
-    # Build adjacency from mesh faces
-    adjacency = {i: set() for i in range(len(mesh.vertices))}
-    for poly in mesh.polygons:
-        verts = list(poly.vertices)
-        for i, v in enumerate(verts):
-            adjacency[v].add(verts[(i + 1) % len(verts)])
-            adjacency[v].add(verts[(i - 1) % len(verts)])
-
-    # Find boundary vertices and blend
-    blended = set()
-    for v_idx, neighbors in adjacency.items():
-        v_bone = vertex_bones.get(v_idx)
-        if not v_bone:
+        if not closest_bone:
             continue
 
-        for n_idx in neighbors:
-            n_bone = vertex_bones.get(n_idx)
-            if n_bone and n_bone != v_bone:
-                # Boundary found - blend 50/50
-                key = tuple(sorted([v_idx, n_idx]))
-                if key in blended:
+        # Special handling for spine - use Z-based gradient for smooth bending
+        spine_bones = ['DEF-hips', 'DEF-spine.001', 'DEF-spine.002', 'DEF-spine.003']
+        is_spine_area = closest_bone in spine_bones
+
+        weights = {}
+
+        if is_spine_area and all(b in bone_data for b in spine_bones):
+            # Get Z positions of spine bone midpoints
+            spine_z = [(b, bone_data[b]['mid'].z) for b in spine_bones]
+            spine_z.sort(key=lambda x: x[1])  # Sort by Z
+
+            # Find which two spine bones this vertex is between
+            vert_z = vert_pos.z
+            for i in range(len(spine_z) - 1):
+                bone_low, z_low = spine_z[i]
+                bone_high, z_high = spine_z[i + 1]
+
+                if z_low <= vert_z <= z_high:
+                    # Interpolate between these two bones
+                    t = (vert_z - z_low) / max(z_high - z_low, 0.001)
+                    weights[bone_low] = 1.0 - t
+                    weights[bone_high] = t
+                    break
+            else:
+                # Outside range - use closest
+                if vert_z < spine_z[0][1]:
+                    weights[spine_z[0][0]] = 1.0
+                else:
+                    weights[spine_z[-1][0]] = 1.0
+        else:
+            # Non-spine: use closest bone with joint blending
+            blend_radius = 0.1  # 10cm blend zone
+            weights = {closest_bone: 1.0}
+
+            for bone_a, bone_b in joint_pairs:
+                if bone_a not in bone_data or bone_b not in bone_data:
                     continue
-                blended.add(key)
+                if closest_bone == bone_a:
+                    joint_pos = bone_data[bone_a]['tail']
+                    other_bone = bone_b
+                elif closest_bone == bone_b:
+                    joint_pos = bone_data[bone_b]['head']
+                    other_bone = bone_a
+                else:
+                    continue
 
-                # Update vertex v_idx
-                vg1 = mesh_obj.vertex_groups[v_bone]
-                vg2 = mesh_obj.vertex_groups[n_bone]
-                vg1.add([v_idx], 0.5, 'REPLACE')
-                vg2.add([v_idx], 0.5, 'ADD')
+                joint_dist = (vert_pos - joint_pos).length
+                if joint_dist < blend_radius:
+                    blend_factor = (1.0 - joint_dist / blend_radius) * 0.5
+                    weights[closest_bone] = 1.0 - blend_factor
+                    weights[other_bone] = blend_factor
+                    break
 
-                # Update vertex n_idx
-                vg1.add([n_idx], 0.5, 'ADD')
-                vg2.add([n_idx], 0.5, 'REPLACE')
+        # Apply weights
+        for bone_name, w in weights.items():
+            if w > 0.01:
+                vg = mesh_obj.vertex_groups[bone_name]
+                vg.add([vert.index], w, 'REPLACE')
 
-    print(f"  Blended {len(blended)} boundary edges")
+    print("  Weights applied with joint blending")
 
     # Add armature modifier
     mod = mesh_obj.modifiers.new(name='Armature', type='ARMATURE')

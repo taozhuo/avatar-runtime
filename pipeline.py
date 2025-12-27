@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Bakable AI - Main Pipeline Orchestrator
-Connects: Meshy API -> VLM Perception -> Blender Auto-Rig -> Export
+Connects: Meshy API -> MediaPipe Perception -> Blender Auto-Rig -> Export
 
 Usage:
     python pipeline.py generate "A cyberpunk samurai"
@@ -108,36 +108,20 @@ class BakableAIPipeline:
 
         return output_path
 
-    def perceive_joints(self, image_path: Path, use_qc: bool = True, mesh_path: Path = None) -> dict:
+    def perceive_joints(self, image_path: Path) -> dict:
         """
-        Phase 1A: Use VLM to detect joint positions.
+        Phase 1A: Use MediaPipe to detect joint positions.
 
         Args:
             image_path: Path to front-view screenshot
-            use_qc: Whether to use quality control loop
-            mesh_path: Path to mesh (required if use_qc=True)
 
         Returns:
-            Dict of joint markers
+            Dict of joint markers with normalized coordinates
         """
-        from vlm_agent import VLMAgent
+        from vision_pipe import detect_pose
 
-        agent = VLMAgent()
-
-        if use_qc and mesh_path:
-            def render_debug_callback(markers):
-                debug_path = self.render_debug_view(mesh_path, markers.to_dict())
-                return str(debug_path)
-
-            markers = agent.perceive_with_quality_control(
-                str(image_path),
-                render_debug_callback,
-                max_retries=3
-            )
-            return markers.to_dict()
-        else:
-            markers = agent.perceive_joints(str(image_path))
-            return markers.to_dict()
+        markers = detect_pose(str(image_path))
+        return markers
 
     def auto_rig(self, mesh_path: Path, markers: dict, output_name: str = "avatar_rigged.glb") -> Path:
         """
@@ -167,13 +151,12 @@ class BakableAIPipeline:
 
         return output_path
 
-    def run_rig_pipeline(self, mesh_path: Path, use_qc: bool = True) -> Path:
+    def run_rig_pipeline(self, mesh_path: Path) -> Path:
         """
         Run the full rigging pipeline on an existing mesh.
 
         Args:
             mesh_path: Path to T-pose mesh
-            use_qc: Whether to use VLM quality control loop
 
         Returns:
             Path to rigged avatar GLB
@@ -182,13 +165,13 @@ class BakableAIPipeline:
         print("BAKABLE AI - RIGGING PIPELINE")
         print("="*60)
 
-        # Step 1: Render for VLM
+        # Step 1: Render for MediaPipe
         print("\n[1/3] Rendering front view...")
         front_view = self.render_for_perception(mesh_path)
 
-        # Step 2: VLM Perception
-        print("\n[2/3] VLM joint detection...")
-        markers = self.perceive_joints(front_view, use_qc=use_qc, mesh_path=mesh_path)
+        # Step 2: MediaPipe Perception
+        print("\n[2/3] MediaPipe joint detection...")
+        markers = self.perceive_joints(front_view)
 
         # Save markers
         markers_path = self.output_dir / "markers.json"
@@ -206,13 +189,12 @@ class BakableAIPipeline:
 
         return output
 
-    def run_full_pipeline(self, prompt: str, use_qc: bool = True) -> Path:
+    def run_full_pipeline(self, prompt: str) -> Path:
         """
         Run the complete pipeline: Generate -> Perceive -> Rig.
 
         Args:
             prompt: Text description of the character
-            use_qc: Whether to use VLM quality control loop
 
         Returns:
             Path to rigged avatar GLB
@@ -227,7 +209,7 @@ class BakableAIPipeline:
         mesh_path = self.generate_mesh(prompt)
 
         # Phase 1: Rig the mesh
-        return self.run_rig_pipeline(mesh_path, use_qc)
+        return self.run_rig_pipeline(mesh_path)
 
 
 def main():
@@ -244,15 +226,13 @@ def main():
     # Rig command
     rig_parser = subparsers.add_parser("rig", help="Rig an existing mesh")
     rig_parser.add_argument("mesh", help="Path to T-pose mesh (GLB/OBJ)")
-    rig_parser.add_argument("--no-qc", action="store_true", help="Skip quality control loop")
 
     # Full pipeline command
     full_parser = subparsers.add_parser("full", help="Run complete pipeline (generate + rig)")
     full_parser.add_argument("prompt", help="Text description of the character")
-    full_parser.add_argument("--no-qc", action="store_true", help="Skip quality control loop")
 
     # Perceive command (for testing)
-    perceive_parser = subparsers.add_parser("perceive", help="Test VLM perception on an image")
+    perceive_parser = subparsers.add_parser("perceive", help="Test MediaPipe perception on an image")
     perceive_parser.add_argument("image", help="Path to front-view image")
 
     args = parser.parse_args()
@@ -274,18 +254,18 @@ def main():
         if not mesh_path.exists():
             print(f"ERROR: Mesh not found: {mesh_path}")
             return
-        result = pipeline.run_rig_pipeline(mesh_path, use_qc=not args.no_qc)
+        result = pipeline.run_rig_pipeline(mesh_path)
         print(f"Rigged: {result}")
 
     elif args.command == "full":
         if not ensure_blender():
             return
-        result = pipeline.run_full_pipeline(args.prompt, use_qc=not args.no_qc)
+        result = pipeline.run_full_pipeline(args.prompt)
         print(f"Complete: {result}")
 
     elif args.command == "perceive":
-        from vlm_agent import perceive_joints
-        markers = perceive_joints(args.image)
+        from vision_pipe import detect_pose
+        markers = detect_pose(args.image)
         print(json.dumps(markers, indent=2))
 
 

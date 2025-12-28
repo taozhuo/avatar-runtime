@@ -5,7 +5,7 @@ Auto-rigging pipeline for 3D avatars. Takes any humanoid mesh and outputs a full
 ## Pipeline Overview
 
 ```
-Input Mesh (.glb) → Render Views → MediaPipe Detection → Skeleton Fitting → Skin Weights → Animation Retargeting → Output (.glb)
+Input Mesh (.glb) → Render Views → YOLO11 Pose Detection → Skeleton Fitting → Skin Weights → Animation Retargeting → Output (.glb)
 ```
 
 ### Core Algorithm (full_rig_pipeline.py)
@@ -14,10 +14,10 @@ Input Mesh (.glb) → Render Views → MediaPipe Detection → Skeleton Fitting 
    - Import GLB/FBX/OBJ
    - Center at origin, normalize scale to ~2m height
 
-2. **Multi-View Landmark Detection**
-   - Render front/back/side views using Blender
-   - Run MediaPipe Pose on each view
-   - Triangulate 3D joint positions from 2D landmarks
+2. **YOLO11 Pose Detection**
+   - Render front view using Blender
+   - Run YOLO11-pose model for keypoint detection
+   - Extract 17 keypoints (nose, shoulders, elbows, wrists, hips, knees, ankles)
 
 3. **Skeleton Fitting**
    - Load Rigify-compatible armature (66 bones with DEF- prefix)
@@ -91,16 +91,12 @@ Uses Rigify-compatible skeleton with 66 bones:
 
 ## Key Algorithms
 
-### MediaPipe to 3D Triangulation
+### YOLO11 Pose to 3D
 
-```
-Front view (XY) + Side view (ZY) → 3D position (X, Y, Z)
-```
-
-Landmarks are detected in 2D, then combined:
-- X from front view
-- Y averaged from both views
-- Z from side view
+YOLO11-pose detects 17 keypoints in 2D, then projects to 3D using mesh bounds:
+- 2D keypoints normalized to image coordinates
+- Depth (Z) estimated from mesh bounding box
+- Joint positions scaled to match mesh dimensions
 
 ### Bone Heat Skinning
 
@@ -119,7 +115,7 @@ Bone name mapping handles common conventions:
 ## Dependencies
 
 - Blender 3.6+ (tested with 5.0)
-- MediaPipe (`pip install mediapipe`)
+- Ultralytics YOLO (`pip install ultralytics`)
 - Python 3.9+
 
 ## Three.js Viewer

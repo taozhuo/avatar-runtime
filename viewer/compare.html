@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Rigging Comparison: Ours vs Meshy</title>
+    <style>
+        body { margin: 0; background: #1a1a2e; overflow: hidden; font-family: Arial; }
+        #container { width: 100vw; height: 100vh; }
+        #controls {
+            position: fixed; top: 10px; left: 10px; z-index: 100;
+            background: rgba(0,0,0,0.8); padding: 15px; border-radius: 8px;
+            color: white; max-height: 90vh; overflow-y: auto;
+        }
+        button {
+            display: block; width: 100%; margin: 5px 0; padding: 10px;
+            background: #4a4a6a; border: none; color: white; cursor: pointer;
+            border-radius: 4px; font-size: 14px;
+        }
+        button:hover { background: #6a6a8a; }
+        button.active { background: #2ecc71; }
+        h3 { margin: 10px 0 5px 0; color: #888; font-size: 12px; }
+        .label {
+            position: absolute; color: white; font-size: 14px;
+            text-shadow: 2px 2px 4px black; pointer-events: none;
+        }
+    </style>
+</head>
+<body>
+    <div id="controls">
+        <h2>Rigging Comparison</h2>
+        <p style="color:#888;font-size:12px;">Left: Our Pipeline<br>Right: Meshy API</p>
+        <h3>ANIMATIONS</h3>
+        <div id="anim-buttons"></div>
+    </div>
+    <div id="container"></div>
+    <div class="label" style="bottom: 20px; left: 25%;">Our Bone Heat</div>
+    <div class="label" style="bottom: 20px; right: 25%;">Meshy API</div>
+
+    <script type="importmap">
+    {
+        "imports": {
+            "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+            "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+        }
+    }
+    </script>
+    <script type="module">
+        import * as THREE from 'three';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+        import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x1a1a2e);
+
+        const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 100);
+        camera.position.set(0, 1.5, 5);
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.shadowMap.enabled = true;
+        document.getElementById('container').appendChild(renderer.domElement);
+
+        const controls = new OrbitControls(camera, renderer.domElement);
+        controls.target.set(0, 1, 0);
+        controls.update();
+
+        // Lights
+        const ambient = new THREE.AmbientLight(0xffffff, 0.5);
+        scene.add(ambient);
+        const directional = new THREE.DirectionalLight(0xffffff, 1);
+        directional.position.set(5, 10, 5);
+        directional.castShadow = true;
+        scene.add(directional);
+
+        // Grid
+        const grid = new THREE.GridHelper(10, 10, 0x444466, 0x333355);
+        scene.add(grid);
+
+        // Divider line
+        const dividerGeo = new THREE.BufferGeometry().setFromPoints([
+            new THREE.Vector3(0, 0, -5),
+            new THREE.Vector3(0, 3, -5),
+            new THREE.Vector3(0, 3, 5),
+            new THREE.Vector3(0, 0, 5)
+        ]);
+        const dividerMat = new THREE.LineBasicMaterial({ color: 0x666666 });
+        const divider = new THREE.Line(dividerGeo, dividerMat);
+        scene.add(divider);
+
+        const avatars = [
+            { name: 'ours', path: '../output/meshy_fat/rigged_character.glb', x: -1.2 },
+            { name: 'meshy', path: '../output/meshy_fat_walking.glb', x: 1.2 },
+        ];
+
+        const mixers = [];
+        const loader = new GLTFLoader();
+        let animationNames = [];
+
+        let oursLoaded = false;
+        avatars.forEach((avatar) => {
+            loader.load(avatar.path, (gltf) => {
+                const model = gltf.scene;
+                model.position.x = avatar.x;
+                model.traverse(c => { if (c.isMesh) { c.castShadow = true; c.receiveShadow = true; }});
+                scene.add(model);
+
+                const mixer = new THREE.AnimationMixer(model);
+                mixers.push({ mixer, animations: gltf.animations, name: avatar.name });
+
+                console.log(`Loaded ${avatar.name}: ${gltf.animations.length} animations`);
+                gltf.animations.forEach(a => console.log(`  - ${a.name}`));
+
+                // Build animation buttons from our pipeline model (has more animations)
+                if (avatar.name === 'ours' && !oursLoaded) {
+                    oursLoaded = true;
+                    animationNames = gltf.animations.map(a => a.name);
+                    const container = document.getElementById('anim-buttons');
+                    animationNames.forEach(name => {
+                        const btn = document.createElement('button');
+                        btn.textContent = name;
+                        btn.onclick = () => playAnimation(name);
+                        container.appendChild(btn);
+                    });
+                    // Auto-play walking to match Meshy
+                    const walkAnim = animationNames.find(n => n.toLowerCase().includes('walk')) || animationNames[0];
+                    if (walkAnim) {
+                        playAnimation(walkAnim);
+                    }
+                }
+
+                // For Meshy model, play its own animation
+                if (avatar.name === 'meshy') {
+                    console.log('Meshy animations:', gltf.animations.map(a => a.name));
+                    if (gltf.animations.length > 0) {
+                        const action = mixer.clipAction(gltf.animations[0]);
+                        action.setLoop(THREE.LoopRepeat);
+                        action.play();
+                        console.log('Playing Meshy animation:', gltf.animations[0].name);
+                    }
+                }
+            }, undefined, (err) => console.error(`Failed to load ${avatar.path}:`, err));
+        });
+
+        function playAnimation(name) {
+            document.querySelectorAll('#anim-buttons button').forEach(b => {
+                b.classList.toggle('active', b.textContent === name);
+            });
+
+            mixers.forEach(({ mixer, animations }) => {
+                mixer.stopAllAction();
+                const clip = animations.find(a => a.name === name);
+                if (clip) {
+                    mixer.clipAction(clip).play();
+                }
+            });
+        }
+
+        const clock = new THREE.Clock();
+        function animate() {
+            requestAnimationFrame(animate);
+            const delta = clock.getDelta();
+            mixers.forEach(({ mixer }) => mixer.update(delta));
+            renderer.render(scene, camera);
+        }
+        animate();
+
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+    </script>
+</body>
+</html>

@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Meshy Animations</title>
+    <style>
+        body { margin: 0; background: #1a1a2e; font-family: Arial; }
+        #container { width: 100vw; height: 100vh; }
+        #controls { position: fixed; top: 10px; left: 10px; z-index: 100; background: rgba(0,0,0,0.8); padding: 15px; border-radius: 8px; color: white; }
+        button { display: block; width: 100%; margin: 5px 0; padding: 10px; background: #4a4a6a; border: none; color: white; cursor: pointer; border-radius: 4px; }
+        button:hover { background: #6a6a8a; }
+        button.active { background: #2ecc71; }
+    </style>
+</head>
+<body>
+    <div id="controls">
+        <h3>Meshy Animations</h3>
+        <div id="buttons"></div>
+    </div>
+    <div id="container"></div>
+    <script type="importmap">
+    { "imports": { "three": "https://unpkg.com/three@0.160.0/build/three.module.js", "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/" } }
+    </script>
+    <script type="module">
+        import * as THREE from 'three';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+        import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x1a1a2e);
+        const camera = new THREE.PerspectiveCamera(50, window.innerWidth/window.innerHeight, 0.1, 100);
+        camera.position.set(0, 1.5, 4);
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        document.getElementById('container').appendChild(renderer.domElement);
+        const controls = new OrbitControls(camera, renderer.domElement);
+        controls.target.set(0, 1, 0);
+
+        scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+        const dir = new THREE.DirectionalLight(0xffffff, 1);
+        dir.position.set(5, 10, 5);
+        scene.add(dir);
+        scene.add(new THREE.GridHelper(10, 10));
+
+        const loader = new GLTFLoader();
+        const anims = [
+            { id: 1, name: 'Idle', path: '../output/meshy_fat_anim_1.glb' },
+            { id: 50, name: 'Action 50', path: '../output/meshy_fat_anim_50.glb' },
+            { id: 92, name: 'Attack', path: '../output/meshy_fat_attack.glb' },
+            { id: 100, name: 'Action 100', path: '../output/meshy_fat_anim_100.glb' },
+            { id: 150, name: 'Action 150', path: '../output/meshy_fat_anim_150.glb' },
+            { id: 'walk', name: 'Walking', path: '../output/meshy_fat_walking.glb' },
+        ];
+
+        let currentModel = null;
+        let currentMixer = null;
+
+        function loadAnim(anim) {
+            if (currentModel) scene.remove(currentModel);
+
+            document.querySelectorAll('#buttons button').forEach(b =>
+                b.classList.toggle('active', b.dataset.id == anim.id));
+
+            loader.load(anim.path, (gltf) => {
+                currentModel = gltf.scene;
+                scene.add(currentModel);
+                currentMixer = new THREE.AnimationMixer(currentModel);
+                if (gltf.animations[0]) {
+                    currentMixer.clipAction(gltf.animations[0]).play();
+                }
+            });
+        }
+
+        // Create buttons
+        const btnContainer = document.getElementById('buttons');
+        anims.forEach(a => {
+            const btn = document.createElement('button');
+            btn.textContent = a.name;
+            btn.dataset.id = a.id;
+            btn.onclick = () => loadAnim(a);
+            btnContainer.appendChild(btn);
+        });
+
+        // Load first
+        loadAnim(anims[0]);
+
+        const clock = new THREE.Clock();
+        function animate() {
+            requestAnimationFrame(animate);
+            if (currentMixer) currentMixer.update(clock.getDelta());
+            renderer.render(scene, camera);
+        }
+        animate();
+    </script>
+</body>
+</html>

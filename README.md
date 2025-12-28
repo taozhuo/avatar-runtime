@@ -1,134 +1,155 @@
-# Bakable AI - Avatar Runtime
+# Avatar Runtime
 
-Text-to-Playable avatar factory. Generates rigged 3D avatars from text prompts.
+Auto-rigging pipeline for 3D avatars. Takes any humanoid mesh and outputs a fully rigged, animated character.
 
-## Architecture
+## Pipeline Overview
 
 ```
-Text Prompt → Meshy API → Raw Mesh → VLM Perception → Auto-Rig → Playable Avatar
-                            ↓              ↓              ↓
-                         .glb           Gemini        Blender
-                         T-pose         joints        skeleton
+Input Mesh (.glb) → Render Views → MediaPipe Detection → Skeleton Fitting → Skin Weights → Animation Retargeting → Output (.glb)
 ```
 
-## Quick Start
+### Core Algorithm (full_rig_pipeline.py)
 
-### 1. Install Dependencies
+1. **Load & Normalize Mesh**
+   - Import GLB/FBX/OBJ
+   - Center at origin, normalize scale to ~2m height
+
+2. **Multi-View Landmark Detection**
+   - Render front/back/side views using Blender
+   - Run MediaPipe Pose on each view
+   - Triangulate 3D joint positions from 2D landmarks
+
+3. **Skeleton Fitting**
+   - Load Rigify-compatible armature (66 bones with DEF- prefix)
+   - Position bones to match detected landmarks:
+     - Hips at midpoint of hip landmarks
+     - Spine interpolated from hips to shoulders
+     - Arms/legs positioned from shoulder/elbow/wrist and hip/knee/ankle
+
+4. **Skin Weights (Bone Heat)**
+   - Use Blender's native automatic weights (`ARMATURE_AUTO`)
+   - Falls back to envelope weights if bone heat fails
+   - Data transfer for weight cleanup
+
+5. **Animation Retargeting**
+   - Import animations from library (Mixamo-compatible FBX/GLB)
+   - Map bone names (handles DEF- prefix, .L/.R suffixes)
+   - Export each animation as separate GLB with embedded skeleton
+
+## Usage
+
+### Rig a Single Mesh
 
 ```bash
-pip install -r requirements.txt
+blender --background --python full_rig_pipeline.py -- \
+  --mesh input.glb \
+  --output-dir output/my_avatar
 ```
 
-### 2. Install Blender
-
-Download from https://www.blender.org/download/ (v3.6+ recommended)
-
-### 3. Configure API Keys
-
-Edit `.env`:
-```
-meshy-api-key=your_meshy_key
-gemini-api-key=your_gemini_key
-```
-
-### 4. Run the Pipeline
-
-**Full pipeline (generate + rig):**
-```bash
-python pipeline.py full "A cyberpunk samurai warrior"
-```
-
-**Rig an existing mesh:**
-```bash
-python pipeline.py rig path/to/mesh.glb
-```
-
-**Generate mesh only:**
-```bash
-python pipeline.py generate "A fantasy wizard" -o wizard.glb
-```
-
-### 5. View in Browser
+### Rig with Animation Library
 
 ```bash
-# Start a local server
-python -m http.server 8000
-
-# Open http://localhost:8000/viewer/
+blender --background --python full_rig_pipeline.py -- \
+  --mesh input.glb \
+  --output-dir output/my_avatar \
+  --anim-library path/to/animations.glb
 ```
 
-Load your rigged `.glb` and animations from `mixamo_fbx/`.
+### Apply Animations to Existing Rig
 
-## Project Structure
+```bash
+blender --background rigged.blend --python apply_animations.py -- \
+  animations.glb output_dir
+```
+
+## File Structure
 
 ```
 avatar-runtime/
-├── meshy_client.py     # Meshy API (Text → T-pose mesh)
-├── vlm_agent.py        # Gemini VLM (Image → Joint coords)
-├── auto_rig.py         # Blender script (Mesh + Joints → Rigged GLB)
-├── pipeline.py         # Main orchestrator
+├── full_rig_pipeline.py   # Main rigging pipeline
+├── apply_animations.py    # Animation retargeting utility
+├── auto_rig.py            # Legacy VLM-based rigging
+├── meshy_client.py        # Meshy API for text-to-3D
+├── pipeline.py            # CLI orchestrator
 ├── viewer/
-│   └── index.html      # Three.js runtime viewer
-├── mixamo_fbx/
-│   ├── t-pose.fbx      # Master skeleton
-│   ├── Idle.fbx        # Sample animation
-│   ├── Walking.fbx
-│   └── Running.fbx
-├── output/             # Generated files
-├── requirements.txt
-└── .env                # API keys
+│   ├── index.html         # Three.js avatar viewer
+│   ├── anim_library.html  # Animation browser
+│   └── compare.html       # Side-by-side comparison
+├── mixamo_fbx/            # Animation library
+│   ├── t-pose.fbx         # Reference skeleton
+│   └── *.fbx              # Animation clips
+└── output/                # Generated avatars
 ```
 
-## Pipeline Phases
+## Skeleton Structure
 
-### Phase 0: Generation (Meshy API)
-- Creates Preview task with `pose_mode="t-pose"`
-- Refines to high-quality mesh
-- Downloads as `.glb`
+Uses Rigify-compatible skeleton with 66 bones:
 
-### Phase 1: Perception (Gemini VLM)
-- Renders front view in Blender
-- Sends to Gemini for joint detection
-- Quality control loop with debug renders
+- **Spine**: root → DEF-hips → DEF-spine.001/002/003 → DEF-neck → DEF-head
+- **Arms**: DEF-shoulder.L/R → DEF-upper_arm → DEF-forearm → DEF-hand → fingers
+- **Legs**: DEF-thigh.L/R → DEF-shin → DEF-foot → DEF-toe
 
-### Phase 2: Rigging (Blender)
-- Sanitizes mesh (remove doubles)
-- Fits Mixamo skeleton to VLM coordinates
-- Binds skin with automatic weights
-- Exports rigged `.glb`
+## Key Algorithms
 
-### Phase 3: Runtime (Three.js)
-- Loads rigged avatar
-- Streams "ghost" animations (FBX skeleton-only)
-- Auto-retargets non-Mixamo skeletons
-- Scales animations to prevent foot sliding
+### MediaPipe to 3D Triangulation
 
-## Animation Retargeting
+```
+Front view (XY) + Side view (ZY) → 3D position (X, Y, Z)
+```
 
-The viewer automatically maps bone names from common formats:
+Landmarks are detected in 2D, then combined:
+- X from front view
+- Y averaged from both views
+- Z from side view
 
-| Source | Target |
-|--------|--------|
-| Unreal `Pelvis` | `mixamorig:Hips` |
-| 3ds Max `Bip001` | `mixamorig:*` |
-| Generic `Hips` | `mixamorig:Hips` |
+### Bone Heat Skinning
 
-## Blender Commands
+Blender's bone heat algorithm:
+1. Builds heat diffusion from each bone
+2. Assigns vertex weights based on heat values
+3. Handles complex topology automatically
+
+### Animation Retargeting
+
+Bone name mapping handles common conventions:
+- `mixamorig:Hips` → `DEF-hips`
+- `Hips` → `DEF-hips`
+- `.L`/`.R` suffix preservation
+
+## Dependencies
+
+- Blender 3.6+ (tested with 5.0)
+- MediaPipe (`pip install mediapipe`)
+- Python 3.9+
+
+## Three.js Viewer
+
+Load rigged GLB in browser:
 
 ```bash
-# Render front view for VLM
-blender --background --python auto_rig.py -- render mesh.glb output.png
-
-# Render debug view with markers
-blender --background --python auto_rig.py -- debug mesh.glb markers.json debug.png
-
-# Full auto-rig
-blender --background --python auto_rig.py -- rig mesh.glb markers.json avatar.glb
+python -m http.server 8888
+# Open http://localhost:8888/viewer/
 ```
 
-## Tips
+Features:
+- Animation playback with mixer
+- Skeleton visualization
+- Orbit controls
 
-- **T-pose is critical**: Meshy must use `pose_mode="t-pose"` for rigging to work
-- **Mesh quality**: Run `remove_doubles` to fix auto-weight failures
-- **VLM accuracy**: The quality control loop catches most perception errors
-- **Animation scaling**: Hip height is scaled to match avatar proportions
+## Meshy Integration
+
+Generate meshes from text:
+
+```python
+from meshy_client import MeshyClient
+
+client = MeshyClient(api_key="...")
+task_id = client.create_text_to_3d("A robot warrior", pose_mode="t-pose")
+client.wait_and_download(task_id, "robot.glb")
+```
+
+Then rig with the pipeline:
+
+```bash
+blender --background --python full_rig_pipeline.py -- --mesh robot.glb
+```

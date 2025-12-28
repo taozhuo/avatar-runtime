@@ -130,6 +130,14 @@ def load_mesh(mesh_path: str):
     bpy.context.view_layer.objects.active = mesh_obj
     bpy.ops.object.transform_apply(location=True, rotation=True, scale=True)
 
+    # Clean mesh for Bone Heat algorithm
+    bpy.ops.object.mode_set(mode='EDIT')
+    bpy.ops.mesh.select_all(action='SELECT')
+    bpy.ops.mesh.remove_doubles(threshold=0.001)  # Merge overlapping vertices
+    bpy.ops.mesh.normals_make_consistent(inside=False)  # Fix normals
+    bpy.ops.object.mode_set(mode='OBJECT')
+    print("  Mesh cleaned (merged doubles, fixed normals)")
+
     return mesh_obj
 
 
@@ -605,184 +613,42 @@ def load_and_fit_skeleton(skeleton_path: str, bone_positions: dict):
 
 def apply_distance_weights(mesh_obj, armature):
     """
-    Apply skin weights using Mesh2Motion's SolverDistanceChildTargeting algorithm.
-
-    Key improvements over simple distance-based:
-    1. Child midpoint targeting - use midpoint between bone and first child
-    2. Hip raycast - exclude leg vertices from hip bone assignment
-    3. Boundary smoothing - smooth weights at bone transitions using mesh adjacency
+    Apply Blender's native 'Bone Heat' (Automatic Weights) algorithm.
+    Uses heat diffusion equation - much better than manual distance calculation.
+    Heat cannot jump through air gaps, so hand won't affect hip weights.
     """
-    print("\n[Step 4] Applying Mesh2Motion-style skin weights...")
+    print("\n[Step 4] Applying Blender Bone Heat weights...")
 
-    mesh = mesh_obj.data
-    bones = armature.data.bones
+    # Ensure we're in object mode
+    bpy.ops.object.mode_set(mode='OBJECT')
+    bpy.ops.object.select_all(action='DESELECT')
 
-    # Clear existing vertex groups
-    mesh_obj.vertex_groups.clear()
+    # Selection order matters: Child (Mesh) then Parent (Armature)
+    mesh_obj.select_set(True)
+    armature.select_set(True)
+    bpy.context.view_layer.objects.active = armature
 
-    # Create vertex groups for each bone
-    for bone in bones:
-        mesh_obj.vertex_groups.new(name=bone.name)
+    # Parent with Automatic Weights (calls internal Heatmap Solver)
+    try:
+        bpy.ops.object.parent_set(type='ARMATURE_AUTO')
+        print("  Bone Heat weights calculated successfully")
+    except Exception as e:
+        print(f"  Bone Heat failed: {e}")
+        print("  Falling back to Envelope weights...")
+        try:
+            bpy.ops.object.parent_set(type='ARMATURE_ENVELOPE')
+            print("  Envelope weights applied")
+        except Exception as e2:
+            print(f"  Envelope also failed: {e2}")
+            # Last resort: just parent without weights
+            bpy.ops.object.parent_set(type='ARMATURE')
+            print("  Parented without automatic weights")
 
-    # Build bone hierarchy with child midpoint positions (Mesh2Motion approach)
-    bone_data = {}
-    for bone in bones:
-        if bone.name == 'root':
-            continue
-
-        head = armature.matrix_world @ bone.head_local
-        tail = armature.matrix_world @ bone.tail_local
-
-        # Calculate child midpoint (key Mesh2Motion technique)
-        # Uses midpoint between bone head and first child's head
-        child_midpoint = (head + tail) / 2  # Default to bone midpoint
-        if bone.children:
-            child = bone.children[0]
-            child_head = armature.matrix_world @ child.head_local
-            child_midpoint = (head + child_head) / 2
-
-        bone_data[bone.name] = {
-            'head': head,
-            'tail': tail,
-            'child_mid': child_midpoint,  # Used for distance calculation
-            'bone': bone
-        }
-
-    # Get mesh bounds
-    bbox = [mesh_obj.matrix_world @ Vector(c) for c in mesh_obj.bound_box]
-    min_z = min(v.z for v in bbox)
-    max_z = max(v.z for v in bbox)
-    height = max_z - min_z
-
-    # Hip raycast: Find crotch level to separate hip from thighs
-    # Cast ray downward from hip bone to find bottom of hip region
-    hip_bone = bone_data.get('DEF-hips')
-    crotch_z = min_z + height * 0.45  # Default crotch level
-
-    if hip_bone:
-        # Raycast from hip center downward to find crotch
-        hip_center = hip_bone['head']
-        ray_origin = Vector((hip_center.x, hip_center.y, hip_center.z))
-        ray_dir = Vector((0, 0, -1))
-
-        hit = raycast_to_mesh(mesh_obj, ray_origin, ray_dir)
-        if hit:
-            crotch_z = hit.z
-            print(f"  Hip raycast: crotch at Z={crotch_z:.3f}")
-
-    print(f"  Processing {len(mesh.vertices)} vertices...")
-
-    # Phase 1: Assign initial weights based on distance to child midpoints
-    vertex_weights = {}  # vert_index -> {bone_name: weight}
-
-    for vert in mesh.vertices:
-        vert_pos = mesh_obj.matrix_world @ vert.co
-
-        # Find closest bones using child midpoint distance
-        distances = []
-        for bone_name, bd in bone_data.items():
-            # Use child midpoint for distance calculation (Mesh2Motion key insight)
-            dist = (vert_pos - bd['child_mid']).length
-            distances.append((bone_name, dist))
-
-        distances.sort(key=lambda x: x[1])
-        closest_bone = distances[0][0]
-        closest_dist = distances[0][1]
-
-        # Special handling: Hip vs Thigh separation using crotch raycast
-        if closest_bone == 'DEF-hips' and vert_pos.z < crotch_z:
-            # Below crotch - assign to thigh instead
-            # Find closest thigh
-            thigh_l = bone_data.get('DEF-thigh.L')
-            thigh_r = bone_data.get('DEF-thigh.R')
-            if thigh_l and thigh_r:
-                dist_l = (vert_pos - thigh_l['child_mid']).length
-                dist_r = (vert_pos - thigh_r['child_mid']).length
-                closest_bone = 'DEF-thigh.L' if dist_l < dist_r else 'DEF-thigh.R'
-
-        # Apply soft blending at bone boundaries
-        # Find second closest bone for potential blending
-        blend_radius = 0.08  # 8cm blend zone
-        weights = {closest_bone: 1.0}
-
-        if len(distances) > 1:
-            second_bone = distances[1][0]
-            second_dist = distances[1][1]
-
-            # Blend if distances are close
-            dist_diff = second_dist - closest_dist
-            if dist_diff < blend_radius and dist_diff > 0:
-                # Smooth blend factor
-                blend = 1.0 - (dist_diff / blend_radius)
-                blend = blend * 0.4  # Max 40% to secondary bone
-                weights[closest_bone] = 1.0 - blend
-                weights[second_bone] = blend
-
-        vertex_weights[vert.index] = weights
-
-    # Phase 2: Boundary smoothing using mesh face adjacency
-    # Build vertex adjacency from faces
-    print("  Smoothing bone weight boundaries...")
-    vertex_neighbors = {i: set() for i in range(len(mesh.vertices))}
-    for poly in mesh.polygons:
-        verts = list(poly.vertices)
-        for i, v in enumerate(verts):
-            vertex_neighbors[v].add(verts[(i - 1) % len(verts)])
-            vertex_neighbors[v].add(verts[(i + 1) % len(verts)])
-
-    # Smooth weights at boundaries (2 iterations)
-    for smooth_iter in range(2):
-        new_weights = {}
-        for vert_idx, weights in vertex_weights.items():
-            # Get dominant bone
-            if not weights:
-                continue
-
-            dominant_bone = max(weights.items(), key=lambda x: x[1])[0]
-
-            # Check neighbors for different bone assignments
-            neighbor_bones = set()
-            for neighbor_idx in vertex_neighbors[vert_idx]:
-                if neighbor_idx in vertex_weights:
-                    neighbor_dominant = max(
-                        vertex_weights[neighbor_idx].items(),
-                        key=lambda x: x[1]
-                    )[0]
-                    if neighbor_dominant != dominant_bone:
-                        neighbor_bones.add(neighbor_dominant)
-
-            # If at boundary, blend with neighbors
-            if neighbor_bones:
-                smoothed = dict(weights)
-                for nb in neighbor_bones:
-                    if nb not in smoothed:
-                        smoothed[nb] = 0.0
-                    smoothed[nb] += 0.1  # Add small weight to neighbor bones
-
-                # Normalize
-                total = sum(smoothed.values())
-                smoothed = {k: v / total for k, v in smoothed.items()}
-                new_weights[vert_idx] = smoothed
-            else:
-                new_weights[vert_idx] = weights
-
-        vertex_weights = new_weights
-
-    # Phase 3: Apply final weights
-    for vert_idx, weights in vertex_weights.items():
-        for bone_name, w in weights.items():
-            if w > 0.01 and bone_name in mesh_obj.vertex_groups:
-                vg = mesh_obj.vertex_groups[bone_name]
-                vg.add([vert_idx], w, 'REPLACE')
-
-    print("  Mesh2Motion-style weights applied")
-
-    # Add armature modifier
-    mod = mesh_obj.modifiers.new(name='Armature', type='ARMATURE')
-    mod.object = armature
-
-    # Parent mesh to armature
-    mesh_obj.parent = armature
+    # Ensure armature modifier is named correctly
+    for mod in mesh_obj.modifiers:
+        if mod.type == 'ARMATURE':
+            mod.name = 'Armature'
+            break
 
     print("  Skinning complete!")
 

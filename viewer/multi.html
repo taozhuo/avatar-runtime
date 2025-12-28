@@ -45,7 +45,7 @@
         scene.background = new THREE.Color(0x1a1a2e);
 
         const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 100);
-        camera.position.set(0, 1.5, 8);
+        camera.position.set(0, 1.5, 12);
 
         const renderer = new THREE.WebGLRenderer({ antialias: true });
         renderer.setSize(window.innerWidth, window.innerHeight);
@@ -78,12 +78,14 @@
         scene.add(grid);
 
         const avatars = [
-            { name: 'scifi', path: '../output/meshy_scifi/rigged_character.glb', x: -3 },
-            { name: 'fantasy', path: '../output/meshy_fantasy/rigged_character.glb', x: -1.8 },
-            { name: 'horror', path: '../output/meshy_horror/rigged_character.glb', x: -0.6 },
-            { name: 'robot', path: '../output/meshy_robot/rigged_character.glb', x: 0.6 },
-            { name: 'fat', path: '../output/meshy_fat/rigged_character.glb', x: 1.8 },
-            { name: 'thin', path: '../output/meshy_thin/rigged_character.glb', x: 3 },
+            { name: 'child_boy', path: '../output/meshy_child_boy/rigged_character.glb', x: -4.5 },
+            { name: 'child_girl', path: '../output/meshy_child_girl/rigged_character.glb', x: -3.3 },
+            { name: 'scifi', path: '../output/meshy_scifi/rigged_character.glb', x: -2.1 },
+            { name: 'fantasy', path: '../output/meshy_fantasy/rigged_character.glb', x: -0.9 },
+            { name: 'fat', path: '../output/meshy_fat/rigged_character.glb', x: 0.3 },
+            { name: 'thin', path: '../output/meshy_thin/rigged_character.glb', x: 1.5 },
+            { name: 'horror', path: '../output/meshy_horror/rigged_character.glb', x: 2.7 },
+            { name: 'robot', path: '../output/meshy_robot/rigged_character.glb', x: 3.9 },
         ];
 
         const mixers = [];

@@ -1,0 +1,364 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Weapon System</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { background: #1a1a2e; overflow: hidden; }
+        #container { width: 100vw; height: 100vh; }
+        #ui {
+            position: fixed;
+            top: 20px;
+            left: 20px;
+            background: rgba(0,0,0,0.9);
+            padding: 15px;
+            border-radius: 8px;
+            color: white;
+            font-family: monospace;
+            font-size: 12px;
+            max-width: 350px;
+        }
+        button {
+            margin: 3px;
+            padding: 8px 12px;
+            cursor: pointer;
+            background: #4a4a6a;
+            border: none;
+            color: white;
+            border-radius: 4px;
+        }
+        button:hover { background: #6a6a8a; }
+        #log {
+            margin-top: 10px;
+            padding: 10px;
+            background: #111;
+            max-height: 200px;
+            overflow-y: auto;
+            font-size: 11px;
+        }
+        .section { margin: 10px 0; }
+        .section h4 { margin-bottom: 5px; color: #8af; }
+    </style>
+</head>
+<body>
+    <div id="ui">
+        <h3>Weapon System</h3>
+        <div class="section">
+            <h4>Weapons</h4>
+            <button onclick="equipWeapon('sword')">Sword</button>
+            <button onclick="equipWeapon('axe')">Axe</button>
+            <button onclick="equipWeapon('hammer')">Hammer</button>
+            <button onclick="unequipWeapon()">Unequip</button>
+        </div>
+        <div class="section">
+            <h4>Debug</h4>
+            <button onclick="toggleSkeleton()">Skeleton</button>
+            <button onclick="toggleAxes()">Axes</button>
+            <button onclick="captureAndEvaluate()">Evaluate</button>
+        </div>
+        <div id="log"></div>
+    </div>
+    <div id="container"></div>
+
+    <script type="importmap">
+    {
+        "imports": {
+            "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+            "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+        }
+    }
+    </script>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+        import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+
+        const logEl = document.getElementById('log');
+        function log(msg) {
+            logEl.innerHTML += msg + '<br>';
+            logEl.scrollTop = logEl.scrollHeight;
+            console.log(msg);
+        }
+
+        // Scene
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x1a1a2e);
+
+        const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 100);
+        camera.position.set(1.5, 1.2, 1.5);
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.shadowMap.enabled = true;
+        document.getElementById('container').appendChild(renderer.domElement);
+
+        const controls = new OrbitControls(camera, renderer.domElement);
+        controls.target.set(0, 1, 0);
+        controls.update();
+
+        // Lighting
+        scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+        const dirLight = new THREE.DirectionalLight(0xffffff, 1);
+        dirLight.position.set(5, 10, 5);
+        dirLight.castShadow = true;
+        scene.add(dirLight);
+
+        // Ground
+        const ground = new THREE.Mesh(
+            new THREE.PlaneGeometry(10, 10),
+            new THREE.MeshStandardMaterial({ color: 0x222244 })
+        );
+        ground.rotation.x = -Math.PI / 2;
+        ground.receiveShadow = true;
+        scene.add(ground);
+
+        const grid = new THREE.GridHelper(10, 20, 0x444466, 0x333355);
+        scene.add(grid);
+
+        const loader = new GLTFLoader();
+
+        // State
+        let character = null;
+        let mixer = null;
+        let handBone = null;
+        let handSocket = null;
+        let equippedWeapon = null;
+        let skeletonHelper = null;
+        let socketAxes = null;
+        let showAxes = true;
+
+        // Load character
+        async function loadCharacter() {
+            log('Loading character...');
+            const gltf = await loader.loadAsync('../output/meshy_scifi_anims/Idle_Loop.glb');
+            character = gltf.scene;
+            scene.add(character);
+
+            // Find right hand bone
+            character.traverse((child) => {
+                if (child.isBone) {
+                    // Match various hand bone naming conventions
+                    const name = child.name.toLowerCase();
+                    if ((name.includes('hand') && (name.includes('r') || name.includes('right'))) ||
+                        name === 'def-hand.r') {
+                        if (!handBone) {  // Take first match
+                            handBone = child;
+                            log(`Found hand: ${child.name}`);
+                        }
+                    }
+                }
+                if (child.isSkinnedMesh) {
+                    child.castShadow = true;
+                    skeletonHelper = new THREE.SkeletonHelper(child);
+                    skeletonHelper.visible = false;
+                    scene.add(skeletonHelper);
+                }
+            });
+
+            if (!handBone) {
+                log('ERROR: No hand bone found');
+                return;
+            }
+
+            // Create hand socket with proper orientation
+            // Our grip convention (in glTF Y-up):
+            //   Forward (grip Z) = points toward blade = should align with finger direction
+            //   Up (grip Y) = thumb direction = should align with thumb
+            //   Right (grip X) = perpendicular
+            //
+            // For Blender-rigged characters (DEF-hand.R):
+            //   Hand bone Y = typically along fingers (toward fingertips)
+            //   Hand bone Z = typically toward thumb
+            //   Hand bone X = typically palm direction
+            //
+            // Socket rotation aligns these:
+            handSocket = new THREE.Object3D();
+            handSocket.name = 'HandSocket';
+
+            // Position in palm
+            handSocket.position.set(0, 0.08, 0);
+
+            // Rotation to align grip with hand:
+            // We need grip.forward (Y) to align with fingers (bone Y) - OK, no change
+            // We need grip.up (Z) to align with thumb (bone Z) - OK, no change
+            // But we may need to flip or rotate based on actual bone orientation
+            //
+            // Try different rotations - adjust based on visual feedback:
+            // Default: no rotation (if conventions match)
+            // If weapon points wrong way: rotate 180 around Y
+            // If weapon rotated around handle: rotate around Y
+
+            // For standard Blender rigs, we often need 90° adjustments
+            // handSocket.rotation.set(Math.PI/2, 0, 0);  // Try X rotation
+            // handSocket.rotation.set(0, Math.PI/2, 0);  // Try Y rotation
+            // handSocket.rotation.set(0, 0, Math.PI/2);  // Try Z rotation
+
+            handBone.add(handSocket);
+
+            // Socket axes helper
+            socketAxes = new THREE.AxesHelper(0.1);
+            handSocket.add(socketAxes);
+
+            // Animation
+            mixer = new THREE.AnimationMixer(character);
+            if (gltf.animations.length > 0) {
+                mixer.clipAction(gltf.animations[0]).play();
+            }
+
+            log('Character ready');
+        }
+
+        // Equip weapon
+        window.equipWeapon = async function(name) {
+            if (!handSocket) {
+                log('No hand socket');
+                return;
+            }
+
+            unequipWeapon();
+
+            try {
+                log(`Loading ${name}...`);
+                const gltf = await loader.loadAsync(`../output/tools/${name}.glb`);
+                const weapon = gltf.scene;
+
+                // Find Grip node
+                let grip = null;
+                weapon.traverse((child) => {
+                    if (child.name === 'Grip') {
+                        grip = child;
+                    }
+                });
+
+                if (!grip) {
+                    log('No Grip node, attaching at origin');
+                    handSocket.add(weapon);
+                    equippedWeapon = weapon;
+                    return;
+                }
+
+                // Update matrices
+                weapon.updateMatrixWorld(true);
+                handSocket.updateMatrixWorld(true);
+
+                // Get grip local transform (relative to weapon root)
+                const gripLocal = grip.matrix.clone();
+
+                // In Three.js (Y-up), after glTF conversion from Blender (Z-up):
+                // Grip forward was Z in Blender → Y in Three.js
+                // Grip up was Y in Blender → -Z in Three.js
+                //
+                // For blade pointing down: rotate -90° around X (in Three.js)
+                const correction = new THREE.Matrix4().makeRotationX(-Math.PI / 2);
+
+                // Apply correction to socket
+                const socketWorld = handSocket.matrixWorld.clone();
+                const socketCorrected = new THREE.Matrix4().multiplyMatrices(socketWorld, correction);
+
+                // Equip equation: WeaponWorld = SocketCorrected * inverse(GripLocal)
+                const invGripLocal = gripLocal.clone().invert();
+                const weaponWorld = new THREE.Matrix4().multiplyMatrices(socketCorrected, invGripLocal);
+
+                // Parent weapon to socket
+                handSocket.add(weapon);
+
+                // Convert weapon world matrix to local (relative to socket)
+                const socketWorldInv = handSocket.matrixWorld.clone().invert();
+                const weaponLocal = new THREE.Matrix4().multiplyMatrices(socketWorldInv, weaponWorld);
+
+                // Apply
+                const pos = new THREE.Vector3();
+                const quat = new THREE.Quaternion();
+                const scale = new THREE.Vector3();
+                weaponLocal.decompose(pos, quat, scale);
+
+                weapon.position.copy(pos);
+                weapon.quaternion.copy(quat);
+                weapon.scale.set(1, 1, 1);
+
+                equippedWeapon = weapon;
+
+                // Add grip axes for debugging
+                const gripAxes = new THREE.AxesHelper(0.1);
+                grip.add(gripAxes);
+
+                log(`Equipped ${name}`);
+
+            } catch (e) {
+                log(`Error: ${e.message}`);
+                console.error(e);
+            }
+        };
+
+        window.unequipWeapon = function() {
+            if (equippedWeapon && handSocket) {
+                handSocket.remove(equippedWeapon);
+                equippedWeapon = null;
+            }
+        };
+
+        window.toggleSkeleton = function() {
+            if (skeletonHelper) skeletonHelper.visible = !skeletonHelper.visible;
+        };
+
+        window.toggleAxes = function() {
+            showAxes = !showAxes;
+            if (socketAxes) socketAxes.visible = showAxes;
+        };
+
+        window.captureAndEvaluate = function() {
+            // Capture current frame and log info
+            if (!equippedWeapon) {
+                log('No weapon equipped');
+                return;
+            }
+
+            character.updateMatrixWorld(true);
+
+            // Get grip world position
+            let grip = null;
+            equippedWeapon.traverse((c) => { if (c.name === 'Grip') grip = c; });
+
+            if (grip) {
+                const gripWorld = new THREE.Vector3();
+                grip.getWorldPosition(gripWorld);
+
+                const socketWorld = new THREE.Vector3();
+                handSocket.getWorldPosition(socketWorld);
+
+                const distance = gripWorld.distanceTo(socketWorld);
+                log(`Grip-Socket distance: ${distance.toFixed(4)}`);
+
+                if (distance < 0.01) {
+                    log('✓ Grip aligned with socket');
+                } else {
+                    log('✗ Grip NOT aligned');
+                }
+            }
+        };
+
+        // Animation loop
+        const clock = new THREE.Clock();
+        function animate() {
+            requestAnimationFrame(animate);
+            if (mixer) mixer.update(clock.getDelta());
+            renderer.render(scene, camera);
+        }
+
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        // Init
+        loadCharacter().then(() => {
+            animate();
+            log('Ready!');
+        }).catch(e => {
+            log(`Init error: ${e.message}`);
+        });
+    </script>
+</body>
+</html>

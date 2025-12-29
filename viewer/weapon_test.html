@@ -1,0 +1,384 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Weapon Equip Test</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { background: #1a1a2e; overflow: hidden; }
+        #container { width: 100vw; height: 100vh; }
+        #ui {
+            position: fixed;
+            top: 20px;
+            left: 20px;
+            background: rgba(0,0,0,0.8);
+            padding: 15px;
+            border-radius: 8px;
+            color: white;
+            font-family: monospace;
+            font-size: 12px;
+            max-width: 300px;
+        }
+        button {
+            margin: 5px 5px 5px 0;
+            padding: 8px 12px;
+            cursor: pointer;
+            background: #4a4a6a;
+            border: none;
+            color: white;
+            border-radius: 4px;
+        }
+        button:hover { background: #6a6a8a; }
+        #log {
+            margin-top: 10px;
+            padding: 10px;
+            background: #111;
+            max-height: 200px;
+            overflow-y: auto;
+            font-size: 11px;
+        }
+    </style>
+</head>
+<body>
+    <div id="ui">
+        <h3>Weapon Equip Test</h3>
+        <div style="margin: 10px 0;">
+            <button onclick="equipWeapon('sword')">Equip Sword</button>
+            <button onclick="equipWeapon('axe')">Equip Axe</button>
+            <button onclick="unequipWeapon()">Unequip</button>
+        </div>
+        <div style="margin: 10px 0;">
+            <button onclick="toggleSkeleton()">Toggle Skeleton</button>
+            <button onclick="toggleGripHelper()">Toggle Grip Axes</button>
+        </div>
+        <div id="log"></div>
+    </div>
+    <div id="container"></div>
+
+    <script type="importmap">
+    {
+        "imports": {
+            "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+            "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+        }
+    }
+    </script>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+        import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+
+        // Logging
+        function log(msg) {
+            const logEl = document.getElementById('log');
+            const line = document.createElement('div');
+            line.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
+            logEl.appendChild(line);
+            logEl.scrollTop = logEl.scrollHeight;
+            console.log(msg);
+        }
+
+        // Scene setup
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x1a1a2e);
+
+        const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 100);
+        camera.position.set(2, 1.5, 2);
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.shadowMap.enabled = true;
+        document.getElementById('container').appendChild(renderer.domElement);
+
+        const controls = new OrbitControls(camera, renderer.domElement);
+        controls.target.set(0, 1, 0);
+        controls.update();
+
+        // Lighting
+        scene.add(new THREE.AmbientLight(0xffffff, 0.5));
+        const dirLight = new THREE.DirectionalLight(0xffffff, 1);
+        dirLight.position.set(5, 10, 5);
+        dirLight.castShadow = true;
+        scene.add(dirLight);
+
+        // Ground
+        const ground = new THREE.Mesh(
+            new THREE.PlaneGeometry(10, 10),
+            new THREE.MeshStandardMaterial({ color: 0x222244 })
+        );
+        ground.rotation.x = -Math.PI / 2;
+        ground.receiveShadow = true;
+        scene.add(ground);
+
+        // Grid
+        const grid = new THREE.GridHelper(10, 20, 0x444466, 0x333355);
+        scene.add(grid);
+
+        const loader = new GLTFLoader();
+
+        // State
+        let character = null;
+        let mixer = null;
+        let handBone = null;
+        let handSocket = null;
+        let equippedWeapon = null;
+        let skeletonHelper = null;
+        let gripHelper = null;
+
+        // Weapon cache
+        const weaponCache = {};
+
+        // Load character
+        async function loadCharacter() {
+            log('Loading character...');
+
+            return new Promise((resolve, reject) => {
+                loader.load('../output/meshy_scifi_anims/Idle_Loop.glb', (gltf) => {
+                    character = gltf.scene;
+                    scene.add(character);
+
+                    // Find hand bone
+                    const handNames = [
+                        'DEF-hand.R', 'DEF-hand.L',
+                        'mixamorig:RightHand', 'mixamorig:LeftHand',
+                        'RightHand', 'LeftHand',
+                        'hand.R', 'hand.L'
+                    ];
+
+                    character.traverse((child) => {
+                        if (child.isBone) {
+                            for (const name of handNames) {
+                                if (child.name === name || child.name.includes('hand') && child.name.includes('R')) {
+                                    handBone = child;
+                                    log(`Found hand bone: ${child.name}`);
+                                    break;
+                                }
+                            }
+                        }
+                        if (child.isSkinnedMesh) {
+                            child.castShadow = true;
+                        }
+                    });
+
+                    if (!handBone) {
+                        // List all bones for debugging
+                        log('Available bones:');
+                        character.traverse((child) => {
+                            if (child.isBone) {
+                                log(`  - ${child.name}`);
+                            }
+                        });
+                        reject(new Error('No hand bone found'));
+                        return;
+                    }
+
+                    // Create hand socket
+                    handSocket = new THREE.Object3D();
+                    handSocket.name = 'HandSocket';
+                    // Offset to palm position (adjust as needed)
+                    handSocket.position.set(0, 0.05, 0);
+                    handBone.add(handSocket);
+
+                    // Add socket visualization
+                    const socketHelper = new THREE.AxesHelper(0.1);
+                    handSocket.add(socketHelper);
+
+                    // Setup animation
+                    mixer = new THREE.AnimationMixer(character);
+                    if (gltf.animations.length > 0) {
+                        const action = mixer.clipAction(gltf.animations[0]);
+                        action.play();
+                    }
+
+                    // Create skeleton helper
+                    character.traverse((child) => {
+                        if (child.isSkinnedMesh) {
+                            skeletonHelper = new THREE.SkeletonHelper(child);
+                            skeletonHelper.visible = false;
+                            scene.add(skeletonHelper);
+                        }
+                    });
+
+                    log('Character loaded');
+                    resolve();
+                }, undefined, reject);
+            });
+        }
+
+        // Load weapon
+        async function loadWeapon(name) {
+            if (weaponCache[name]) {
+                return weaponCache[name].clone();
+            }
+
+            return new Promise((resolve, reject) => {
+                const url = `../output/tools/${name}.glb`;
+                log(`Loading weapon: ${url}`);
+
+                loader.load(url, (gltf) => {
+                    weaponCache[name] = gltf.scene;
+                    log(`Weapon loaded: ${name}`);
+
+                    // Log structure
+                    gltf.scene.traverse((child) => {
+                        log(`  - ${child.name} (${child.type})`);
+                    });
+
+                    resolve(gltf.scene.clone());
+                }, undefined, reject);
+            });
+        }
+
+        // Find Grip node
+        function findGripNode(weapon) {
+            let grip = null;
+            weapon.traverse((child) => {
+                if (child.name === 'Grip' || child.name === 'grip') {
+                    grip = child;
+                }
+            });
+            return grip;
+        }
+
+        // Equip weapon
+        window.equipWeapon = async function(name) {
+            if (!handSocket) {
+                log('ERROR: No hand socket');
+                return;
+            }
+
+            // Unequip current
+            if (equippedWeapon) {
+                unequipWeapon();
+            }
+
+            try {
+                const weapon = await loadWeapon(name);
+
+                // Find Grip node
+                const grip = findGripNode(weapon);
+
+                if (!grip) {
+                    log('WARNING: No Grip node, attaching at origin');
+                    handSocket.add(weapon);
+                    equippedWeapon = weapon;
+                    return;
+                }
+
+                log(`Found Grip node at: ${grip.position.toArray().map(v => v.toFixed(3))}`);
+
+                // Update matrices
+                weapon.updateMatrixWorld(true);
+                handSocket.updateMatrixWorld(true);
+
+                // Get Grip local transform
+                const gripLocal = new THREE.Matrix4();
+                gripLocal.copy(grip.matrix);
+
+                // Compute inverse
+                const invGripLocal = new THREE.Matrix4();
+                invGripLocal.copy(gripLocal).invert();
+
+                // ToolWorld = SocketWorld * inverse(GripLocal)
+                const socketWorld = new THREE.Matrix4();
+                socketWorld.copy(handSocket.matrixWorld);
+
+                const weaponWorld = new THREE.Matrix4();
+                weaponWorld.multiplyMatrices(socketWorld, invGripLocal);
+
+                // Parent to socket first
+                handSocket.add(weapon);
+
+                // Convert world to local (relative to socket)
+                const socketWorldInverse = new THREE.Matrix4();
+                socketWorldInverse.copy(handSocket.matrixWorld).invert();
+
+                const weaponLocal = new THREE.Matrix4();
+                weaponLocal.multiplyMatrices(socketWorldInverse, weaponWorld);
+
+                // Apply local transform
+                const pos = new THREE.Vector3();
+                const quat = new THREE.Quaternion();
+                const scale = new THREE.Vector3();
+                weaponLocal.decompose(pos, quat, scale);
+
+                weapon.position.copy(pos);
+                weapon.quaternion.copy(quat);
+                weapon.scale.set(1, 1, 1);
+
+                equippedWeapon = weapon;
+
+                log(`Equipped ${name} at local pos: ${pos.toArray().map(v => v.toFixed(3))}`);
+
+                // Add grip helper
+                if (gripHelper) {
+                    grip.remove(gripHelper);
+                }
+                gripHelper = new THREE.AxesHelper(0.08);
+                gripHelper.visible = false;
+                grip.add(gripHelper);
+
+            } catch (e) {
+                log(`ERROR: ${e.message}`);
+                console.error(e);
+            }
+        };
+
+        // Unequip weapon
+        window.unequipWeapon = function() {
+            if (equippedWeapon && handSocket) {
+                handSocket.remove(equippedWeapon);
+                equippedWeapon = null;
+                log('Weapon unequipped');
+            }
+        };
+
+        // Toggle skeleton visibility
+        window.toggleSkeleton = function() {
+            if (skeletonHelper) {
+                skeletonHelper.visible = !skeletonHelper.visible;
+                log(`Skeleton: ${skeletonHelper.visible ? 'visible' : 'hidden'}`);
+            }
+        };
+
+        // Toggle grip helper
+        window.toggleGripHelper = function() {
+            if (gripHelper) {
+                gripHelper.visible = !gripHelper.visible;
+                log(`Grip helper: ${gripHelper.visible ? 'visible' : 'hidden'}`);
+            }
+        };
+
+        // Animation loop
+        const clock = new THREE.Clock();
+        function animate() {
+            requestAnimationFrame(animate);
+            const delta = clock.getDelta();
+            if (mixer) mixer.update(delta);
+            renderer.render(scene, camera);
+        }
+
+        // Resize handler
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        // Init
+        async function init() {
+            log('Initializing...');
+            try {
+                await loadCharacter();
+                animate();
+                log('Ready! Click buttons to equip weapons.');
+            } catch (e) {
+                log(`INIT ERROR: ${e.message}`);
+                console.error(e);
+            }
+        }
+
+        init();
+    </script>
+</body>
+</html>

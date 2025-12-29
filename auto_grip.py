@@ -228,107 +228,133 @@ def generate_grip_candidates(
     """
     Generate grip candidate transforms.
     Returns list of candidate dicts with position and rotation.
+
+    For weapons (swords, axes, etc.):
+    - Forward (Z) should point toward the active end (blade, head)
+    - Up (Y) should point where thumb goes when gripping
+    - Right (X) is perpendicular
     """
     candidates = []
 
-    # Try both primary axes
-    axes_to_try = [
-        np.array(meta['pca_axes'][0]),  # Longest axis
-        np.array(meta['pca_axes'][1]),  # Second axis
-    ]
+    # Use ONLY the longest axis (primary PCA axis) for weapon direction
+    # This is the axis along the blade/shaft
+    main_axis = np.array(meta['pca_axes'][0])
 
-    for axis_idx, axis in enumerate(axes_to_try):
-        # Compute thickness profile
-        slice_pos, slice_radii = compute_thickness_profile(vertices, axis)
+    print(f"  Main weapon axis: {main_axis}")
 
-        # Find handle segment
-        start_idx, end_idx, score = find_handle_segment(slice_pos, slice_radii)
+    # Compute thickness profile along main axis
+    slice_pos, slice_radii = compute_thickness_profile(vertices, main_axis)
 
-        if score < 0:
-            continue  # Skip if no good handle found
+    # Debug: print thickness profile
+    print(f"  Thickness profile (t, radius):")
+    for i in range(0, len(slice_pos), max(1, len(slice_pos)//10)):
+        print(f"    t={slice_pos[i]:.3f}: r={slice_radii[i]:.4f}")
 
-        # Grip position = midpoint of handle segment
-        t_grip = (slice_pos[start_idx] + slice_pos[end_idx]) / 2
+    # Find handle segment (thin region)
+    start_idx, end_idx, score = find_handle_segment(slice_pos, slice_radii)
 
-        # Find vertices near grip point
-        projections = np.dot(vertices, axis)
-        segment_width = slice_pos[end_idx] - slice_pos[start_idx]
-        mask = np.abs(projections - t_grip) < segment_width / 4
+    print(f"  Handle segment: idx {start_idx}-{end_idx}, t={slice_pos[start_idx]:.3f} to {slice_pos[end_idx]:.3f}")
+    print(f"  Handle score: {score:.2f}")
+
+    if score < -999:  # Very permissive, always try to find something
+        print("  WARNING: No good handle found, using center")
+        start_idx = len(slice_pos) // 4
+        end_idx = len(slice_pos) // 2
+
+    # Grip position = CENTER of handle segment
+    t_grip = (slice_pos[start_idx] + slice_pos[end_idx]) / 2
+
+    # Find vertices near grip point
+    projections = np.dot(vertices, main_axis)
+    segment_width = slice_pos[end_idx] - slice_pos[start_idx]
+    mask = np.abs(projections - t_grip) < max(segment_width / 2, 0.05)
+    nearby_verts = vertices[mask]
+
+    if len(nearby_verts) < 3:
+        # Fallback: use vertices near the center
+        mask = np.abs(projections - t_grip) < 0.1
         nearby_verts = vertices[mask]
 
-        if len(nearby_verts) < 3:
-            continue
+    if len(nearby_verts) < 3:
+        nearby_verts = vertices
 
-        grip_pos = nearby_verts.mean(axis=0)
+    # Grip position is the centroid of nearby vertices (projected to axis position)
+    grip_pos = t_grip * main_axis
 
-        # Determine forward direction (toward active end)
-        t_min, t_max = projections.min(), projections.max()
-        if t_grip - t_min < t_max - t_grip:
-            # Handle is near t_min, forward toward t_max
-            forward = axis.copy()
-        else:
-            forward = -axis.copy()
+    print(f"  Grip position (on axis): {grip_pos}")
 
-        forward /= np.linalg.norm(forward)
+    # Determine forward direction: toward the HEAVIER/LARGER end (active end)
+    t_min, t_max = projections.min(), projections.max()
 
-        # Compute right axis from local 2D PCA
-        if abs(forward[0]) < 0.9:
-            perp1 = np.cross(forward, [1, 0, 0])
-        else:
-            perp1 = np.cross(forward, [0, 1, 0])
-        perp1 /= np.linalg.norm(perp1)
+    # Compute "mass" on each side of grip
+    mass_low = np.sum(projections < t_grip)  # vertices on low-t side
+    mass_high = np.sum(projections > t_grip)  # vertices on high-t side
 
-        # Project nearby verts to perpendicular plane
-        coords_2d = np.column_stack([
-            np.dot(nearby_verts, perp1),
-            np.dot(nearby_verts, np.cross(forward, perp1))
-        ])
+    # Also consider thickness: the blade/head end is usually thicker
+    low_thickness = np.mean(slice_radii[:len(slice_radii)//3])
+    high_thickness = np.mean(slice_radii[-len(slice_radii)//3:])
 
-        # 2D PCA for right direction
-        if len(coords_2d) > 2:
-            cov_2d = np.cov(coords_2d.T)
-            _, evecs = np.linalg.eigh(cov_2d)
-            major_2d = evecs[:, -1]
-            right = major_2d[0] * perp1 + major_2d[1] * np.cross(forward, perp1)
-            right /= np.linalg.norm(right)
-        else:
-            right = perp1
+    print(f"  Mass low/high: {mass_low}/{mass_high}")
+    print(f"  Thickness low/high: {low_thickness:.3f}/{high_thickness:.3f}")
 
-        up = np.cross(forward, right)
-        up /= np.linalg.norm(up)
-        right = np.cross(up, forward)
-        right /= np.linalg.norm(right)
+    # Forward points toward the end with more mass (the blade/active end has more geometry)
+    # The active end (blade, hammer head) typically has significantly more vertices
+    if mass_high > mass_low:
+        forward = main_axis.copy()
+        print(f"  Forward direction: +main_axis (toward high-t, more mass)")
+    else:
+        forward = -main_axis.copy()
+        print(f"  Forward direction: -main_axis (toward low-t, more mass)")
 
-        # Generate variants
-        for sign in [1, -1]:  # Forward direction variants
-            fwd = forward * sign
+    forward /= np.linalg.norm(forward)
 
-            for roll_idx in range(num_roll_variants):
-                # Rotate around forward axis
-                roll_angle = (2 * math.pi * roll_idx) / num_roll_variants
+    # Compute perpendicular axes
+    # Use world up (Z in Blender) as reference for "up" direction
+    world_up = np.array([0, 0, 1])
 
-                # Rodrigues rotation
-                cos_r, sin_r = math.cos(roll_angle), math.sin(roll_angle)
-                r_rot = cos_r * right + sin_r * up
-                u_rot = -sin_r * right + cos_r * up
+    # Right = forward x world_up (perpendicular to both)
+    right = np.cross(forward, world_up)
+    if np.linalg.norm(right) < 0.1:
+        # Forward is nearly vertical, use world X instead
+        right = np.cross(forward, [1, 0, 0])
+    right /= np.linalg.norm(right)
 
-                # Build rotation matrix
-                rot_matrix = np.array([r_rot, u_rot, fwd]).T  # Column vectors
+    # Up = right x forward (perpendicular to both)
+    up = np.cross(right, forward)
+    up /= np.linalg.norm(up)
 
-                # Position jitters
-                jitter_amounts = np.linspace(-0.02, 0.02, num_position_jitters)
-                for jitter in jitter_amounts:
-                    pos = grip_pos + jitter * fwd
+    # Re-orthogonalize right
+    right = np.cross(forward, up)
+    right /= np.linalg.norm(right)
 
-                    candidates.append({
-                        'position': pos.tolist(),
-                        'rotation_matrix': rot_matrix.tolist(),
-                        'forward': fwd.tolist(),
-                        'up': u_rot.tolist(),
-                        'right': r_rot.tolist(),
-                        'axis_idx': axis_idx,
-                        'handle_score': float(score),
-                    })
+    print(f"  Forward: {forward}")
+    print(f"  Up: {up}")
+    print(f"  Right: {right}")
+
+    # Generate roll variants (rotate around forward axis)
+    for roll_idx in range(num_roll_variants):
+        roll_angle = (2 * math.pi * roll_idx) / num_roll_variants
+
+        # Rodrigues rotation around forward axis
+        cos_r, sin_r = math.cos(roll_angle), math.sin(roll_angle)
+        r_rot = cos_r * right + sin_r * up
+        u_rot = -sin_r * right + cos_r * up
+
+        # Position variants along axis
+        jitter_amounts = np.linspace(-0.03, 0.03, num_position_jitters)
+        for jitter in jitter_amounts:
+            pos = grip_pos + jitter * forward
+
+            candidates.append({
+                'position': pos.tolist(),
+                'rotation_matrix': np.array([r_rot, u_rot, forward]).T.tolist(),
+                'forward': forward.tolist(),
+                'up': u_rot.tolist(),
+                'right': r_rot.tolist(),
+                'axis_idx': 0,
+                'handle_score': float(score),
+                'roll_angle': roll_angle,
+            })
 
     return candidates
 
@@ -472,13 +498,42 @@ def create_grip_node(
     grip.empty_display_size = 0.05
     bpy.context.scene.collection.objects.link(grip)
 
-    # Set transform
+    # Get axis vectors directly from candidate (more reliable than matrix)
+    right = Vector(candidate['right'])
+    up = Vector(candidate['up'])
+    forward = Vector(candidate['forward'])
+
+    # Normalize
+    right.normalize()
+    up.normalize()
+    forward.normalize()
+
+    # Ensure orthogonal (Gram-Schmidt)
+    up = up - up.dot(forward) * forward
+    up.normalize()
+    right = forward.cross(up)
+    right.normalize()
+
+    # Build 3x3 rotation matrix (columns are basis vectors in Blender)
+    # Column 0 = X axis (right), Column 1 = Y axis (up), Column 2 = Z axis (forward)
+    rot_mat = Matrix((
+        (right.x, up.x, forward.x),
+        (right.y, up.y, forward.y),
+        (right.z, up.z, forward.z),
+    )).to_4x4()
+
+    # Set position
     pos = Vector(candidate['position'])
-    rot_mat = Matrix(candidate['rotation_matrix']).to_4x4()
     rot_mat.translation = pos
+
+    print(f"  Grip position: {pos}")
+    print(f"  Grip forward: {forward}")
+    print(f"  Grip up: {up}")
+    print(f"  Grip right: {right}")
+
     grip.matrix_world = rot_mat
 
-    # Parent to weapon
+    # Parent to weapon (keep transform)
     grip.parent = parent
     grip.matrix_parent_inverse = parent.matrix_world.inverted()
 
